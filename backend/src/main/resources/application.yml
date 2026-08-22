@@ -8,8 +8,9 @@ spring:
     password: ${DB_PASSWORD:paypilot}
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
-      connection-timeout: 3000ms
-      validation-timeout: 1000ms
+      # Hikari exposes these as raw millisecond longs - no duration suffix.
+      connection-timeout: 3000
+      validation-timeout: 1000
 
   jpa:
     # Schema is owned by Flyway migrations only. Hibernate may verify but never mutate it.
@@ -51,6 +52,16 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+paypilot:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:}
+      access-token-ttl-minutes: 15
+    refresh-token:
+      ttl-days: 7
+    rate-limit:
+      auth-capacity-per-minute: 10
 
 logging:
   level:
