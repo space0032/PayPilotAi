@@ -33,4 +33,27 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
     int reserve(@Param("productId") Long productId,
                 @Param("qty") int qty,
                 @Param("now") Instant now);
+
+    /** Payment captured: reserved units leave the building for good. */
+    @Modifying
+    @Query("""
+            UPDATE Inventory i
+            SET i.reserved = i.reserved - :qty,
+                i.updatedAt = :now
+            WHERE i.productId = :productId AND i.reserved >= :qty
+            """)
+    int confirmSale(@Param("productId") Long productId, @Param("qty") int qty,
+                    @Param("now") Instant now);
+
+    /** Payment failed/cancelled: give the reserved units back to shoppers. */
+    @Modifying
+    @Query("""
+            UPDATE Inventory i
+            SET i.available = i.available + :qty,
+                i.reserved = i.reserved - :qty,
+                i.updatedAt = :now
+            WHERE i.productId = :productId AND i.reserved >= :qty
+            """)
+    int release(@Param("productId") Long productId, @Param("qty") int qty,
+                @Param("now") Instant now);
 }

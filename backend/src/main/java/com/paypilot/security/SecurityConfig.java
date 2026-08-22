@@ -46,6 +46,11 @@ public class SecurityConfig {
                         // Catalog browsing is public; carts and checkout are not.
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
                                 "/api/v1/products/**", "/api/v1/categories").permitAll()
+                        // Gateway webhooks authenticate via HMAC signature on
+                        // the raw body, not bearer tokens - verified in the
+                        // controller/service, never by the JWT filter.
+                        .requestMatchers(org.springframework.http.HttpMethod.POST,
+                                "/api/v1/payments/webhook").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(unauthenticatedEntryPoint())

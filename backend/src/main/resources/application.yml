@@ -62,6 +62,10 @@ paypilot:
       ttl-days: 7
     rate-limit:
       auth-capacity-per-minute: 10
+  payments:
+    # mock = local stand-in (no account needed); live adapter comes later.
+    gateway: ${PAYMENTS_GATEWAY:mock}
+    webhook-secret: ${PAYMENTS_WEBHOOK_SECRET:local-mock-whsec-change-me}
 
 logging:
   level:

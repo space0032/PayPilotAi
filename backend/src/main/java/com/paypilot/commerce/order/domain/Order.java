@@ -109,6 +109,19 @@ public class Order {
         return offerId;
     }
 
+    /**
+     * PENDING_PAYMENT -> CONFIRMED only. Anything else means a webhook is
+     * trying to confirm an already-terminal or cancelled order - loud failure
+     * beats silent money loss.
+     */
+    public void markConfirmed() {
+        if (this.status != OrderStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException(
+                    "Order " + id + " cannot be confirmed from " + status);
+        }
+        this.status = OrderStatus.CONFIRMED;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }
