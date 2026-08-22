@@ -22,6 +22,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      *
      * Explicit CASTs keep PostgreSQL happy about untyped JDBC parameters
      * appearing inside IS NULL branches.
+     *
+     * Sort is a whitelisted string, never raw SQL: 'price_asc'/'price_desc'
+     * activate CASE branches; anything else falls through to the default
+     * relevance order (rating desc, price asc). Injection-proof by design.
      */
     @Query(nativeQuery = true, value = """
             SELECT p.*
@@ -31,15 +35,38 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
               AND (:minPricePaise IS NULL OR p.price_paise >= CAST(:minPricePaise AS bigint))
               AND (:maxPricePaise IS NULL OR p.price_paise <= CAST(:maxPricePaise AS bigint))
               AND (:term IS NULL
-                   OR p.title ILIKE '%' || CAST(:term AS text) || '%'
-                   OR p.brand ILIKE '%' || CAST(:term AS text) || '%')
-            ORDER BY p.rating DESC NULLS LAST, p.price_paise ASC
+                   OR p.title ILIKE '%' || CAST(:term AS text) || '%' ESCAPE '\\'
+                   OR p.brand ILIKE '%' || CAST(:term AS text) || '%' ESCAPE '\\')
+            ORDER BY
+              CASE WHEN CAST(:sort AS text) = 'price_asc'  THEN p.price_paise END ASC NULLS LAST,
+              CASE WHEN CAST(:sort AS text) = 'price_desc' THEN p.price_paise END DESC NULLS LAST,
+              p.rating DESC NULLS LAST,
+              p.price_paise ASC,
+              p.id ASC
             LIMIT CAST(:limit AS int) OFFSET CAST(:offset AS int)
             """)
     List<Product> searchCatalog(@Param("term") String term,
                                 @Param("categoryId") Long categoryId,
                                 @Param("minPricePaise") Long minPricePaise,
                                 @Param("maxPricePaise") Long maxPricePaise,
+                                @Param("sort") String sort,
                                 @Param("limit") int limit,
                                 @Param("offset") int offset);
+
+    /** Same predicates as {@link #searchCatalog}, for pagination metadata. */
+    @Query(nativeQuery = true, value = """
+            SELECT COUNT(*)
+            FROM products p
+            WHERE p.active = TRUE
+              AND (:categoryId IS NULL OR p.category_id = CAST(:categoryId AS bigint))
+              AND (:minPricePaise IS NULL OR p.price_paise >= CAST(:minPricePaise AS bigint))
+              AND (:maxPricePaise IS NULL OR p.price_paise <= CAST(:maxPricePaise AS bigint))
+              AND (:term IS NULL
+                   OR p.title ILIKE '%' || CAST(:term AS text) || '%' ESCAPE '\\'
+                   OR p.brand ILIKE '%' || CAST(:term AS text) || '%' ESCAPE '\\')
+            """)
+    long countCatalog(@Param("term") String term,
+                      @Param("categoryId") Long categoryId,
+                      @Param("minPricePaise") Long minPricePaise,
+                      @Param("maxPricePaise") Long maxPricePaise);
 }

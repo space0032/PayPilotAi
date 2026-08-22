@@ -55,7 +55,7 @@ class CatalogSchemaIntegrationTest {
         Long footwearId = categoryRepository.findBySlug("footwear").orElseThrow().getId();
 
         List<Product> results = productRepository.searchCatalog(
-                "running", footwearId, null, RS_5000_IN_PAISE, 20, 0);
+                "running", footwearId, null, RS_5000_IN_PAISE, "relevant", 20, 0);
 
         // "Trail-Ready Runner" deliberately does NOT match ILIKE '%running%';
         // Pegasus matches neither the term nor the budget.
@@ -68,7 +68,7 @@ class CatalogSchemaIntegrationTest {
 
     @Test
     void unfilteredSearch_returnsWholeActiveCatalog() {
-        List<Product> all = productRepository.searchCatalog(null, null, null, null, 100, 0);
+        List<Product> all = productRepository.searchCatalog(null, null, null, null, "relevant", 100, 0);
         assertThat(all).hasSize(32);
     }
 

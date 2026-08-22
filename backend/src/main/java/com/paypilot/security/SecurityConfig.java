@@ -43,6 +43,9 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                             .permitAll()
                         .requestMatchers("/api/v1/auth/**").permitAll()
+                        // Catalog browsing is public; carts and checkout are not.
+                        .requestMatchers(org.springframework.http.HttpMethod.GET,
+                                "/api/v1/products/**", "/api/v1/categories").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(unauthenticatedEntryPoint())
