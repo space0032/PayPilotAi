@@ -2,6 +2,7 @@ package com.paypilot.commerce.cart.api;
 
 import com.paypilot.commerce.cart.CartService;
 import com.paypilot.commerce.cart.api.dto.AddItemRequest;
+import com.paypilot.commerce.cart.api.dto.ApplyOfferRequest;
 import com.paypilot.commerce.cart.api.dto.CartResponse;
 import com.paypilot.commerce.cart.api.dto.UpdateItemRequest;
 import com.paypilot.security.AuthenticatedUser;
@@ -60,5 +61,16 @@ public class CartController {
     @DeleteMapping
     public CartResponse clear(@AuthenticationPrincipal AuthenticatedUser user) {
         return cartService.clear(user.userId());
+    }
+
+    @PostMapping("/offers")
+    public CartResponse applyOffer(@AuthenticationPrincipal AuthenticatedUser user,
+                                   @Valid @RequestBody ApplyOfferRequest request) {
+        return cartService.applyOffer(user.userId(), request.code());
+    }
+
+    @DeleteMapping("/offers")
+    public CartResponse removeOffer(@AuthenticationPrincipal AuthenticatedUser user) {
+        return cartService.removeOffer(user.userId());
     }
 }

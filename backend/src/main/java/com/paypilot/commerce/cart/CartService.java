@@ -14,11 +14,16 @@ import com.paypilot.commerce.cart.repo.CartRepository;
 import com.paypilot.commerce.catalog.domain.Product;
 import com.paypilot.commerce.catalog.repo.InventoryRepository;
 import com.paypilot.commerce.catalog.repo.ProductRepository;
+import com.paypilot.commerce.offer.domain.Offer;
+import com.paypilot.commerce.offer.repo.OfferRedemptionRepository;
+import com.paypilot.commerce.offer.repo.OfferRepository;
+import com.paypilot.commerce.pricing.PricingEngine;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -39,15 +44,27 @@ public class CartService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
+    private final OfferRepository offerRepository;
+    private final OfferRedemptionRepository redemptionRepository;
+    private final PricingEngine pricingEngine;
+    private final Clock clock;
 
     public CartService(CartRepository cartRepository,
                        CartItemRepository cartItemRepository,
                        ProductRepository productRepository,
-                       InventoryRepository inventoryRepository) {
+                       InventoryRepository inventoryRepository,
+                       OfferRepository offerRepository,
+                       OfferRedemptionRepository redemptionRepository,
+                       PricingEngine pricingEngine,
+                       Clock clock) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.inventoryRepository = inventoryRepository;
+        this.offerRepository = offerRepository;
+        this.redemptionRepository = redemptionRepository;
+        this.pricingEngine = pricingEngine;
+        this.clock = clock;
     }
 
     @Transactional
@@ -131,6 +148,57 @@ public class CartService {
         return toResponse(cart);
     }
 
+    /**
+     * Applies an offer to the caller's active cart after full validation.
+     * Redemption rows are only written at checkout; this counts existing
+     * ones so a user who already exhausted their quota cannot re-apply.
+     */
+    @Transactional
+    public CartResponse applyOffer(Long userId, String code) {
+        // Lazy-create like every other cart entry point; an empty cart is a
+        // domain rejection (EMPTY_CART), not a missing-resource error.
+        Cart cart = getOrCreateActiveCart(userId);
+        List<CartItem> items = cartItemRepository.findByCartId(cart.getId());
+        if (items.isEmpty()) {
+            throw new BadRequestException("EMPTY_CART", "Add items before applying an offer");
+        }
+        long subtotalPaise = liveSubtotalPaise(cart.getId());
+
+        Offer offer = offerRepository.findByCodeIgnoreCase(code.trim())
+                .orElseThrow(() -> new NotFoundException("Offer", code));
+        if (!offer.isActive()) {
+            throw new BadRequestException("OFFER_INACTIVE", "This offer is no longer active");
+        }
+        var now = clock.instant();
+        if (offer.getValidFrom() != null && now.isBefore(offer.getValidFrom())) {
+            throw new BadRequestException("OFFER_NOT_STARTED", "This offer is not active yet");
+        }
+        if (offer.getValidTo() != null && now.isAfter(offer.getValidTo())) {
+            throw new BadRequestException("OFFER_EXPIRED", "This offer has expired");
+        }
+        if (subtotalPaise < offer.getMinCartPaise()) {
+            throw new BadRequestException("MIN_CART_NOT_MET",
+                    "Cart must be at least Rs "
+                            + BigDecimal.valueOf(offer.getMinCartPaise(), 2)
+                            + " for this offer");
+        }
+        long used = redemptionRepository.countByOfferIdAndUserId(offer.getId(), userId);
+        if (used >= offer.getUsageLimitPerUser()) {
+            throw new BadRequestException("USAGE_LIMIT_REACHED",
+                    "You have already used this offer the maximum number of times");
+        }
+
+        cart.applyOffer(offer.getId());
+        return toResponse(cart);
+    }
+
+    @Transactional
+    public CartResponse removeOffer(Long userId) {
+        Cart cart = requireActiveCart(userId);
+        cart.removeOffer();
+        return toResponse(cart);
+    }
+
     // ------------------------------------------------------------------
 
     /**
@@ -182,14 +250,40 @@ public class CartService {
                 })
                 .toList();
 
-        long subtotalPaise = items.stream()
+        long subtotalPaise = liveSubtotalPaise(cart.getId());
+
+        String offerCode = null;
+        long discountPaise = 0;
+        if (cart.getAppliedOfferId() != null) {
+            // Quote-only on read: window/usage enforcement happened at apply
+            // time and runs again at checkout. A drifted subtotal can never
+            // push the discount above the subtotal itself (engine clamps).
+            Offer offer = offerRepository.findById(cart.getAppliedOfferId()).orElse(null);
+            if (offer != null) {
+                offerCode = offer.getCode();
+                discountPaise = pricingEngine.quote(offer.getType(),
+                        offer.getDiscountValue(), offer.getMaxDiscountPaise(), subtotalPaise);
+            }
+        }
+
+        return new CartResponse(cart.getId(), lines, items.size(),
+                BigDecimal.valueOf(subtotalPaise, 2),
+                offerCode,
+                BigDecimal.valueOf(discountPaise, 2),
+                BigDecimal.valueOf(subtotalPaise - discountPaise, 2));
+    }
+
+    /** Subtotal from CURRENT catalog prices - the price checkout will honor. */
+    private long liveSubtotalPaise(Long cartId) {
+        List<CartItem> items = cartItemRepository.findByCartId(cartId);
+        Map<Long, Product> products = productRepository.findAllById(
+                        items.stream().map(CartItem::getProductId).toList()).stream()
+                .collect(Collectors.toMap(Product::getId, Function.identity()));
+        return items.stream()
                 .mapToLong(item -> {
                     var p = products.get(item.getProductId());
                     return p == null ? 0 : p.getPricePaise() * item.getQuantity();
                 })
                 .sum();
-
-        return new CartResponse(cart.getId(), lines, items.size(),
-                BigDecimal.valueOf(subtotalPaise, 2));
     }
 }

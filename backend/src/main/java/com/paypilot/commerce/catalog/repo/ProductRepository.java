@@ -2,6 +2,7 @@ package com.paypilot.commerce.catalog.repo;
 
 import com.paypilot.commerce.catalog.domain.Product;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -11,6 +12,11 @@ import java.util.Optional;
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
     Optional<Product> findBySku(String sku);
+
+    /** Price correction (admin ops, test fixtures). Cart snapshots stay historical. */
+    @Modifying
+    @Query("UPDATE Product p SET p.pricePaise = :pricePaise WHERE p.id = :id")
+    void setPricePaise(@Param("id") Long id, @Param("pricePaise") long pricePaise);
 
     /**
      * Catalog search used by both REST endpoints (Phase 4) and the agent's

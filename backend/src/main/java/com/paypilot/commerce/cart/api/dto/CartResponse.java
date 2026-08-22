@@ -1,11 +1,17 @@
 package com.paypilot.commerce.cart.api.dto;
 
 import java.math.BigDecimal;
-import java.util.List;
 
+/**
+ * Cart view with server-authoritative pricing. subtotal - discount = total;
+ * discount is 0.00 and appliedOfferCode null when no offer is active.
+ */
 public record CartResponse(
         Long cartId,
-        List<CartItemResponse> items,
+        java.util.List<CartItemResponse> items,
         int totalItems,
-        BigDecimal subtotal) {
+        BigDecimal subtotal,
+        String appliedOfferCode,
+        BigDecimal discount,
+        BigDecimal total) {
 }

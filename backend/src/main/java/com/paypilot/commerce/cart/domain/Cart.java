@@ -29,6 +29,10 @@ public class Cart {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    /** Bare FK to offers(id) - null when no offer is applied. */
+    @Column(name = "applied_offer_id")
+    private Long appliedOfferId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private CartStatus status = CartStatus.ACTIVE;
@@ -60,5 +64,17 @@ public class Cart {
 
     public CartStatus getStatus() {
         return status;
+    }
+
+    public Long getAppliedOfferId() {
+        return appliedOfferId;
+    }
+
+    public void applyOffer(Long offerId) {
+        this.appliedOfferId = offerId;
+    }
+
+    public void removeOffer() {
+        this.appliedOfferId = null;
     }
 }
