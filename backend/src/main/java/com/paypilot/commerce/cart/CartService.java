@@ -15,6 +15,7 @@ import com.paypilot.commerce.catalog.domain.Product;
 import com.paypilot.commerce.catalog.repo.InventoryRepository;
 import com.paypilot.commerce.catalog.repo.ProductRepository;
 import com.paypilot.commerce.offer.domain.Offer;
+import com.paypilot.commerce.offer.OfferPolicy;
 import com.paypilot.commerce.offer.repo.OfferRedemptionRepository;
 import com.paypilot.commerce.offer.repo.OfferRepository;
 import com.paypilot.commerce.pricing.PricingEngine;
@@ -47,6 +48,7 @@ public class CartService {
     private final OfferRepository offerRepository;
     private final OfferRedemptionRepository redemptionRepository;
     private final PricingEngine pricingEngine;
+    private final OfferPolicy offerPolicy;
     private final Clock clock;
 
     public CartService(CartRepository cartRepository,
@@ -56,6 +58,7 @@ public class CartService {
                        OfferRepository offerRepository,
                        OfferRedemptionRepository redemptionRepository,
                        PricingEngine pricingEngine,
+                       OfferPolicy offerPolicy,
                        Clock clock) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
@@ -64,6 +67,7 @@ public class CartService {
         this.offerRepository = offerRepository;
         this.redemptionRepository = redemptionRepository;
         this.pricingEngine = pricingEngine;
+        this.offerPolicy = offerPolicy;
         this.clock = clock;
     }
 
@@ -166,27 +170,8 @@ public class CartService {
 
         Offer offer = offerRepository.findByCodeIgnoreCase(code.trim())
                 .orElseThrow(() -> new NotFoundException("Offer", code));
-        if (!offer.isActive()) {
-            throw new BadRequestException("OFFER_INACTIVE", "This offer is no longer active");
-        }
-        var now = clock.instant();
-        if (offer.getValidFrom() != null && now.isBefore(offer.getValidFrom())) {
-            throw new BadRequestException("OFFER_NOT_STARTED", "This offer is not active yet");
-        }
-        if (offer.getValidTo() != null && now.isAfter(offer.getValidTo())) {
-            throw new BadRequestException("OFFER_EXPIRED", "This offer has expired");
-        }
-        if (subtotalPaise < offer.getMinCartPaise()) {
-            throw new BadRequestException("MIN_CART_NOT_MET",
-                    "Cart must be at least Rs "
-                            + BigDecimal.valueOf(offer.getMinCartPaise(), 2)
-                            + " for this offer");
-        }
-        long used = redemptionRepository.countByOfferIdAndUserId(offer.getId(), userId);
-        if (used >= offer.getUsageLimitPerUser()) {
-            throw new BadRequestException("USAGE_LIMIT_REACHED",
-                    "You have already used this offer the maximum number of times");
-        }
+        offerPolicy.validate(offer, subtotalPaise,
+                redemptionRepository.countByOfferIdAndUserId(offer.getId(), userId));
 
         cart.applyOffer(offer.getId());
         return toResponse(cart);

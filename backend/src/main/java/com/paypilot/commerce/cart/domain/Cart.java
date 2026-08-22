@@ -77,4 +77,9 @@ public class Cart {
     public void removeOffer() {
         this.appliedOfferId = null;
     }
+
+    /** Terminal transition for this cart instance; a fresh ACTIVE cart may then exist. */
+    public void markOrdered() {
+        this.status = CartStatus.ORDERED;
+    }
 }
