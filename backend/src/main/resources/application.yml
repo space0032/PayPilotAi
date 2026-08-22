@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: paypilot-api
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:paypilot}
+    username: ${DB_USER:paypilot}
+    password: ${DB_PASSWORD:paypilot}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 3000ms
+      validation-timeout: 1000ms
+
+  jpa:
+    # Schema is owned by Flyway migrations only. Hibernate may verify but never mutate it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:never}
+      show-components: ${HEALTH_SHOW_DETAILS:never}
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.paypilot: DEBUG
