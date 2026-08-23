@@ -17,6 +17,8 @@ import com.paypilot.commerce.offer.repo.OfferRedemptionRepository;
 import com.paypilot.commerce.offer.repo.OfferRepository;
 import com.paypilot.commerce.order.api.dto.OrderItemResponse;
 import com.paypilot.commerce.order.api.dto.OrderResponse;
+import com.paypilot.commerce.order.api.dto.OrderSummary;
+import com.paypilot.commerce.catalog.api.dto.PageResponse;
 import com.paypilot.commerce.order.domain.Order;
 import com.paypilot.commerce.order.domain.OrderItem;
 import com.paypilot.commerce.order.domain.OrderStatus;
@@ -26,6 +28,8 @@ import com.paypilot.commerce.payment.StockSettlement;
 import com.paypilot.commerce.payment.domain.PaymentStatus;
 import com.paypilot.commerce.payment.repo.PaymentRepository;
 import com.paypilot.commerce.pricing.PricingEngine;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -92,6 +96,21 @@ public class OrderService {
         this.paymentRepository = paymentRepository;
         this.stockSettlement = stockSettlement;
         this.clock = clock;
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<OrderSummary> list(Long userId, Integer page, Integer size) {
+        // Same clamping contract as catalog listing: hostile or sloppy page
+        // params degrade gracefully instead of becoming a DoS lever.
+        int safePage = page == null ? 0 : Math.max(0, page);
+        int safeSize = size == null ? 20 : Math.min(Math.max(1, size), 100);
+        Page<Order> result = orderRepository.findByUserIdOrderByCreatedAtDesc(
+                userId, PageRequest.of(safePage, safeSize));
+        List<OrderSummary> items = result.getContent().stream()
+                .map(o -> new OrderSummary(o.getId(), o.getStatus().name(),
+                        BigDecimal.valueOf(o.getTotalPaise(), 2), o.getCreatedAt()))
+                .toList();
+        return PageResponse.of(items, safePage, safeSize, result.getTotalElements());
     }
 
     @Transactional

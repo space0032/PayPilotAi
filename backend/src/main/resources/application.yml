@@ -70,6 +70,12 @@ paypilot:
     attempt-ttl-minutes: ${PAYMENTS_ATTEMPT_TTL_MINUTES:30}
     expiry-sweep-interval-ms: ${PAYMENTS_SWEEP_INTERVAL_MS:60000}
 
+  agent:
+    # mock = deterministic scripted planner; live LLM planner comes later.
+    planner: ${AGENT_PLANNER:mock}
+    # Hard ceiling on any single purchase the agent may make.
+    max-spend-paise: ${AGENT_MAX_SPEND_PAISE:1000000}
+
 logging:
   level:
     root: INFO
