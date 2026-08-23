@@ -19,14 +19,19 @@ import com.paypilot.commerce.order.api.dto.OrderItemResponse;
 import com.paypilot.commerce.order.api.dto.OrderResponse;
 import com.paypilot.commerce.order.domain.Order;
 import com.paypilot.commerce.order.domain.OrderItem;
+import com.paypilot.commerce.order.domain.OrderStatus;
 import com.paypilot.commerce.order.repo.OrderItemRepository;
 import com.paypilot.commerce.order.repo.OrderRepository;
+import com.paypilot.commerce.payment.StockSettlement;
+import com.paypilot.commerce.payment.domain.PaymentStatus;
+import com.paypilot.commerce.payment.repo.PaymentRepository;
 import com.paypilot.commerce.pricing.PricingEngine;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,6 +62,8 @@ public class OrderService {
     private final OrderItemRepository orderItemRepository;
     private final PricingEngine pricingEngine;
     private final OfferPolicy offerPolicy;
+    private final PaymentRepository paymentRepository;
+    private final StockSettlement stockSettlement;
     private final Clock clock;
 
     public OrderService(CartRepository cartRepository,
@@ -69,6 +76,8 @@ public class OrderService {
                         OrderItemRepository orderItemRepository,
                         PricingEngine pricingEngine,
                         OfferPolicy offerPolicy,
+                        PaymentRepository paymentRepository,
+                        StockSettlement stockSettlement,
                         Clock clock) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
@@ -80,6 +89,8 @@ public class OrderService {
         this.orderItemRepository = orderItemRepository;
         this.pricingEngine = pricingEngine;
         this.offerPolicy = offerPolicy;
+        this.paymentRepository = paymentRepository;
+        this.stockSettlement = stockSettlement;
         this.clock = clock;
     }
 
@@ -150,6 +161,44 @@ public class OrderService {
         Map<Long, Product> products = productRepository.findAllById(productIds).stream()
                 .collect(Collectors.toMap(Product::getId, Function.identity()));
         return toResponse(order, orderItems, products);
+    }
+
+    /**
+     * Customer cancellation of an unpaid order. Atomic against concurrent
+     * webhook captures: the conditional cancelIfPending wins or loses as a
+     * whole - a paid order can never be cancelled out from under its buyer.
+     * Money already authorized at the bank is refused (refund territory).
+     */
+    @Transactional
+    public OrderResponse cancel(Long userId, Long orderId) {
+        Order order = orderRepository.findByIdAndUserId(orderId, userId)
+                .orElseThrow(() -> new NotFoundException("Order", orderId));
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            throw new ConflictException("INVALID_ORDER_STATE",
+                    "Order %d is %s; only unpaid orders can be cancelled"
+                            .formatted(orderId, order.getStatus()));
+        }
+        // Money moving at the bank is refund territory, not cancel territory:
+        // the customer waits for the gateway outcome (capture or failure).
+        paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId)
+                .filter(p -> p.getStatus() == PaymentStatus.AUTHORIZED
+                        || p.getStatus() == PaymentStatus.PROCESSING)
+                .ifPresent(p -> {
+                    throw new ConflictException("PAYMENT_IN_FLIGHT",
+                            "Money for this order is already moving; wait for the "
+                                    + "gateway outcome instead of cancelling");
+                });
+        Instant now = clock.instant();
+        paymentRepository.cancelUnpaidAttempt(orderId, now);
+        if (orderRepository.cancelIfPending(orderId, now) == 0) {
+            throw new ConflictException("INVALID_ORDER_STATE",
+                    "Order state changed concurrently; reload before retrying");
+        }
+        // Bulk JPQL updates bypass the persistence context - sync the managed
+        // entity or the response below would still read the stale old status.
+        order.markCancelled();
+        stockSettlement.releaseSale(orderId);
+        return get(userId, orderId);
     }
 
     // ------------------------------------------------------------------

@@ -26,7 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.time.Clock;
 import java.util.Map;
 
 /**
@@ -50,26 +50,35 @@ public class PaymentService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final InventoryRepository inventoryRepository;
+    private final StockSettlement stockSettlement;
     private final PaymentGatewayPort gatewayPort;
     private final WebhookSignatureVerifier signatureVerifier;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
+    private final java.time.Duration attemptTtl;
 
     public PaymentService(PaymentRepository paymentRepository,
                           PaymentEventRepository eventRepository,
                           OrderRepository orderRepository,
                           OrderItemRepository orderItemRepository,
                           InventoryRepository inventoryRepository,
+                          StockSettlement stockSettlement,
                           PaymentGatewayPort gatewayPort,
                           WebhookSignatureVerifier signatureVerifier,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          Clock clock,
+                          @Value("${paypilot.payments.attempt-ttl-minutes:30}") long attemptTtlMinutes) {
         this.paymentRepository = paymentRepository;
         this.eventRepository = eventRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.inventoryRepository = inventoryRepository;
+        this.stockSettlement = stockSettlement;
         this.gatewayPort = gatewayPort;
         this.signatureVerifier = signatureVerifier;
         this.objectMapper = objectMapper;
+        this.clock = clock;
+        this.attemptTtl = java.time.Duration.ofMinutes(attemptTtlMinutes);
     }
 
     @Transactional
@@ -90,6 +99,12 @@ public class PaymentService {
     }
 
     private PaymentResponse createAttempt(Long userId, Order order) {
+        // A retry (previous attempt FAILED/EXPIRED/CANCELLED) released its
+        // reservation - re-reserve before offering the gateway another chance,
+        // otherwise a later capture would settle stock we no longer hold.
+        if (paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).isPresent()) {
+            reReserve(order);
+        }
         GatewayOrder gatewayOrder = gatewayPort.createOrder(
                 new GatewayOrderRequest(order.getTotalPaise(), "INR", "order-" + order.getId()));
         if (gatewayOrder.amountPaise() != order.getTotalPaise()) {
@@ -99,8 +114,22 @@ public class PaymentService {
         }
         Payment saved = paymentRepository.save(
                 new Payment(order.getId(), userId, gatewayOrder.id(), order.getTotalPaise()));
-        log.info("Payment attempt {} created for order {}", saved.getId(), order.getId());
+        saved.setExpiresAt(clock.instant().plus(attemptTtl));
+        log.info("Payment attempt {} created for order {} (expires at {})",
+                saved.getId(), order.getId(), saved.getExpiresAt());
         return toResponse(saved);
+    }
+
+    /** Same conditional-update semantics as checkout; shortage aborts loudly. */
+    private void reReserve(Order order) {
+        for (var item : orderItemRepository.findByOrderId(order.getId())) {
+            int updated = inventoryRepository.reserve(
+                    item.getProductId(), item.getQuantity(), clock.instant());
+            if (updated == 0) {
+                throw new ConflictException("INSUFFICIENT_STOCK",
+                        "Stock for this order was sold while payment was pending");
+            }
+        }
     }
 
     /**
@@ -126,7 +155,10 @@ public class PaymentService {
                 + payment.getId();
         String body = buildWebhookBody(event, payId, payment.getRazorpayOrderId(),
                 payment.getAmountPaise());
-        processWebhook(body, signatureVerifier.sign(body), null);
+        // Real gateways stamp every delivery with an id; mirror that so the
+        // ledger's UNIQUE(event_id) dedupe is exercised on this path too.
+        processWebhook(body, signatureVerifier.sign(body),
+                "evt_sim_" + java.util.UUID.randomUUID());
     }
 
     private String buildWebhookBody(String event, String payId, String rzpOrderId,
@@ -177,7 +209,9 @@ public class PaymentService {
         String razorpayPaymentId = entity.path("id").asText(null);
         long amount = entity.path("amount").asLong(-1);
 
-        boolean knownEvent = "payment.captured".equals(event) || "payment.failed".equals(event);
+        boolean knownEvent = "payment.captured".equals(event)
+                || "payment.failed".equals(event)
+                || "payment.authorized".equals(event);
         if (!knownEvent || razorpayOrderId == null) {
             log.info("Ignoring webhook event '{}' (unknown type or missing correlation)", event);
             return Outcome.IGNORED;
@@ -201,6 +235,7 @@ public class PaymentService {
         switch (event) {
             case "payment.captured" -> applyCapture(payment, razorpayPaymentId);
             case "payment.failed" -> applyFailure(payment, razorpayPaymentId, root);
+            case "payment.authorized" -> applyAuthorized(payment, razorpayPaymentId);
             default -> throw new IllegalStateException("unreachable");
         }
         return Outcome.PROCESSED;
@@ -246,7 +281,7 @@ public class PaymentService {
                         "Captured payment references missing order %d"
                                 .formatted(payment.getOrderId())));
         order.markConfirmed();
-        settleStock(payment.getOrderId(), true);
+        stockSettlement.confirmSale(order.getId());
         log.info("Payment {} SUCCESS; order {} CONFIRMED", payment.getId(), order.getId());
     }
 
@@ -257,6 +292,32 @@ public class PaymentService {
             case AUTHORIZED -> PaymentStatus.PROCESSING;
             default -> PaymentStatus.SUCCESS;
         };
+    }
+
+    /** Money reserved at the bank but not yet captured; order stays pending. */
+    private void applyAuthorized(Payment payment, String gatewayPaymentId) {
+        if (payment.getStatus() == PaymentStatus.AUTHORIZED
+                || payment.getStatus() == PaymentStatus.PROCESSING
+                || payment.getStatus() == PaymentStatus.SUCCESS) {
+            log.info("Replayed/conflicting authorization for payment {}; no-op",
+                    payment.getId());
+            return;
+        }
+        if (gatewayPaymentId != null && paymentRepository.existsByRazorpayPaymentIdAndIdNot(
+                gatewayPaymentId, payment.getId())) {
+            log.error("Authorization for payment {} carries razorpay_payment_id {} "
+                    + "already bound to another payment; ignoring",
+                    payment.getId(), gatewayPaymentId);
+            return;
+        }
+        try {
+            payment.markAuthorized(gatewayPaymentId);
+        } catch (IllegalStateException e) {
+            log.warn("Conflicting authorization for payment {} in state {}; ignoring",
+                    payment.getId(), payment.getStatus());
+            return;
+        }
+        log.info("Payment {} AUTHORIZED", payment.getId());
     }
 
     private void applyFailure(Payment payment, String gatewayPaymentId, JsonNode root) {
@@ -276,27 +337,8 @@ public class PaymentService {
         String reason = root.path("payload").path("payment").path("entity")
                 .path("error_description").asText("gateway reported failure");
         payment.markFailed(gatewayPaymentId, reason);
-        settleStock(payment.getOrderId(), false);
+        stockSettlement.releaseSale(payment.getOrderId());
         log.info("Payment {} FAILED; stock released, order stays payable", payment.getId());
-    }
-
-    /** Convert reserved units to sold (capture) or back to available (failure). */
-    private void settleStock(Long orderId, boolean captured) {
-        var items = orderItemRepository.findByOrderId(orderId);
-        Instant now = Instant.now();
-        for (var item : items) {
-            int moved = captured
-                    ? inventoryRepository.confirmSale(item.getProductId(), item.getQuantity(), now)
-                    : inventoryRepository.release(item.getProductId(), item.getQuantity(), now);
-            if (moved == 0) {
-                // Reserved bookkeeping diverged from reality. Roll the whole
-                // webhook back and surface loudly rather than drift silently.
-                throw new IllegalStateException(
-                        "Stock settlement failed for product %d qty %d on order %d (%s)"
-                                .formatted(item.getProductId(), item.getQuantity(),
-                                        orderId, captured ? "capture" : "release"));
-            }
-        }
     }
 
     private PaymentResponse toResponse(Payment p) {

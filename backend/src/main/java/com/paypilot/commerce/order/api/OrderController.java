@@ -37,4 +37,11 @@ public class OrderController {
                              @PathVariable Long orderId) {
         return orderService.get(user.userId(), orderId);
     }
+
+    /** Cancel an unpaid order; releases its stock reservation atomically. */
+    @PostMapping("/{orderId}/cancel")
+    public OrderResponse cancel(@AuthenticationPrincipal AuthenticatedUser user,
+                                @PathVariable Long orderId) {
+        return orderService.cancel(user.userId(), orderId);
+    }
 }

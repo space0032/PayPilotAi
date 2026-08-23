@@ -122,6 +122,15 @@ public class Order {
         this.status = OrderStatus.CONFIRMED;
     }
 
+    /** PENDING_PAYMENT -> CANCELLED only; callers release reservations after. */
+    public void markCancelled() {
+        if (this.status != OrderStatus.PENDING_PAYMENT) {
+            throw new IllegalStateException(
+                    "Order " + id + " cannot be cancelled from " + status);
+        }
+        this.status = OrderStatus.CANCELLED;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }

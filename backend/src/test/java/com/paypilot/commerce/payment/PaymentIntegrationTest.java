@@ -23,6 +23,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +36,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers(disabledWithoutDocker = true)
-@TestPropertySource(properties = "paypilot.security.rate-limit.auth-capacity-per-minute=100")
+@TestPropertySource(properties = {
+        "paypilot.security.rate-limit.auth-capacity-per-minute=100",
+        // Sweeps are triggered explicitly in tests - never by wall clock.
+        "paypilot.payments.expiry-sweep-interval-ms=3600000"})
 class PaymentIntegrationTest {
 
     @Container
@@ -51,6 +56,8 @@ class PaymentIntegrationTest {
     InventoryRepository inventoryRepository;
     @Autowired
     WebhookSignatureVerifier signer;
+    @Autowired
+    PaymentReconciliationService reconciliation;
     @Autowired
     JdbcTemplate jdbc;
     @Autowired
@@ -120,10 +127,17 @@ class PaymentIntegrationTest {
     }
 
     private ResponseEntity<String> postWebhook(String body, String signature) {
+        return postWebhook(body, signature, null);
+    }
+
+    private ResponseEntity<String> postWebhook(String body, String signature, String eventId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (signature != null) {
             headers.set("X-Razorpay-Signature", signature);
+        }
+        if (eventId != null) {
+            headers.set("X-Razorpay-Event-Id", eventId);
         }
         return http.exchange("/api/v1/payments/webhook",
                 HttpMethod.POST, new HttpEntity<>(body, headers), String.class);
@@ -160,27 +174,40 @@ class PaymentIntegrationTest {
     }
     @Test
     void capture_confirmsOrder_andConvertsReservedStockToSold() {
-        Attempt attempt = readyToPay("capture");
-        assertThat(invOf(SKU)).isEqualTo(new Inv(8, 2));
+        // Explicit steps so inventory deltas can be measured against a
+        // baseline - other tests in this class legitimately hold reservations.
+        String token = newUser("capture");
+        fixture(SKU, 100_000L, 10);
+        Inv baseline = invOf(SKU);
+        http.exchange("/api/v1/cart/items", HttpMethod.POST,
+                new HttpEntity<>(new AddItemRequest(pid(SKU), 2), bearer(token)), Void.class);
+        OrderResponse order = http.exchange("/api/v1/orders", HttpMethod.POST,
+                new HttpEntity<>(bearer(token)), OrderResponse.class).getBody();
+        ResponseEntity<PaymentResponse> initiated = initiate(token, order.orderId());
+        assertThat(initiated.getStatusCode().value()).isEqualTo(201);
+        PaymentResponse payment = initiated.getBody();
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(baseline.available() - 2, baseline.reserved() + 2));
 
-        String body = capturedBody(attempt.payment(), 200_000L);
+        String body = capturedBody(payment, 200_000L);
         ResponseEntity<String> response = postWebhook(body, signer.sign(body));
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).contains("processed");
-        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("SUCCESS");
-        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("CONFIRMED");
+        assertThat(paymentStatus(payment.paymentId())).isEqualTo("SUCCESS");
+        assertThat(orderStatus(order.orderId())).isEqualTo("CONFIRMED");
         // Reserved units are consumed: gone from BOTH counters.
-        assertThat(invOf(SKU)).isEqualTo(new Inv(8, 0));
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(baseline.available() - 2, baseline.reserved()));
         String gwPaymentId = jdbc.queryForObject(
                 "SELECT razorpay_payment_id FROM payments WHERE id = ?",
-                String.class, attempt.payment().paymentId());
-        assertThat(gwPaymentId).isEqualTo("pay_ext_" + attempt.payment().paymentId());
+                String.class, payment.paymentId());
+        assertThat(gwPaymentId).isEqualTo("pay_ext_" + payment.paymentId());
         // Every verified delivery lands in the append-only audit ledger.
         Integer ledgerRows = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM payment_events WHERE payment_id = ? "
                 + "AND type = 'payment.captured' AND signature_verified",
-                Integer.class, attempt.payment().paymentId());
+                Integer.class, payment.paymentId());
         assertThat(ledgerRows).isEqualTo(1);
 
         // Simulated path (mock controller) drives the same pipeline.
@@ -306,5 +333,168 @@ class PaymentIntegrationTest {
         ResponseEntity<String> stolen = simulate(intruder,
                 attempt.payment().paymentId(), "simulate-capture");
         assertThat(stolen.getStatusCode().value()).isEqualTo(404);
+    }
+
+    @Test
+    void duplicateEventId_isDeliveredExactlyOnce() {
+        Attempt attempt = readyToPay("dup-event");
+        String body = capturedBody(attempt.payment(), 200_000L);
+        String sig = signer.sign(body);
+        String eventId = "evt_dup_" + attempt.payment().paymentId();
+
+        ResponseEntity<String> first = postWebhook(body, sig, eventId);
+        Inv settled = invOf(SKU);
+        ResponseEntity<String> replay = postWebhook(body, sig, eventId);
+
+        assertThat(first.getStatusCode().value()).isEqualTo(200);
+        assertThat(first.getBody()).contains("processed");
+        assertThat(replay.getStatusCode().value()).isEqualTo(200);
+        assertThat(replay.getBody()).contains("ignored");
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("SUCCESS");
+        assertThat(invOf(SKU)).isEqualTo(settled);
+        Integer rows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment_events WHERE event_id = ?",
+                Integer.class, eventId);
+        assertThat(rows).isEqualTo(1);
+    }
+
+    @Test
+    void failedReplay_releasesStockOnlyOnce() {
+        Attempt attempt = readyToPay("fail-replay");
+        String body = failedBody(attempt.payment());
+        String sig = signer.sign(body);
+
+        postWebhook(body, sig);
+        Inv afterFirst = invOf(SKU);
+
+        // Duplicate failure delivery (no event id): FSM no-op, no double release.
+        ResponseEntity<String> replay = postWebhook(body, sig);
+
+        assertThat(replay.getStatusCode().value()).isEqualTo(200);
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("FAILED");
+        assertThat(invOf(SKU)).isEqualTo(afterFirst);
+    }
+
+    @Test
+    void authorizedEvent_blocksCancel_thenCaptureStillCompletes() {
+        Attempt attempt = readyToPay("auth-cancel");
+        long paise = attempt.payment().amount().movePointRight(2).longValueExact();
+        String authBody = eventBody("payment.authorized", attempt.payment(),
+                "pay_ext_auth_" + attempt.payment().paymentId(), paise);
+        ResponseEntity<String> auth = postWebhook(authBody, signer.sign(authBody));
+
+        assertThat(auth.getStatusCode().value()).isEqualTo(200);
+        assertThat(auth.getBody()).contains("processed");
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("AUTHORIZED");
+
+        // Money is held at the bank - cancelling now would strand it.
+        ResponseEntity<String> cancel = http.exchange(
+                "/api/v1/orders/" + attempt.order().orderId() + "/cancel",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())), String.class);
+        assertThat(cancel.getStatusCode().value()).isEqualTo(409);
+        assertThat(cancel.getBody()).contains("PAYMENT_IN_FLIGHT");
+        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("PENDING_PAYMENT");
+
+        // The gateway completes the capture regardless of customer intent.
+        String capBody = capturedBody(attempt.payment(), paise);
+        ResponseEntity<String> cap = postWebhook(capBody, signer.sign(capBody));
+        assertThat(cap.getStatusCode().value()).isEqualTo(200);
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("SUCCESS");
+        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("CONFIRMED");
+    }
+
+    @Test
+    void staleAttempt_expires_releasesStock_andRetryRecaptures() {
+        Attempt attempt = readyToPay("expire");
+        Inv beforeExpiry = invOf(SKU);
+        jdbc.update("UPDATE payments SET expires_at = ? WHERE id = ?",
+                Timestamp.from(Instant.now().minusSeconds(60)),
+                attempt.payment().paymentId());
+
+        reconciliation.expireStalePayments();
+        Inv afterRelease = invOf(SKU);
+
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("EXPIRED");
+        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("PENDING_PAYMENT");
+        assertThat(afterRelease).isEqualTo(
+                new Inv(beforeExpiry.available() + 2, beforeExpiry.reserved() - 2));
+        // ...even if the sweeper runs again (conditional update loses the race).
+        reconciliation.expireStalePayments();
+        assertThat(invOf(SKU)).isEqualTo(afterRelease);
+
+        // Retry after expiry: fresh attempt AND re-reserved stock.
+        ResponseEntity<PaymentResponse> retry =
+                initiate(attempt.token(), attempt.order().orderId());
+        assertThat(retry.getStatusCode().value()).isEqualTo(201);
+        assertThat(retry.getBody().gatewayOrderId())
+                .isNotEqualTo(attempt.payment().gatewayOrderId());
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(afterRelease.available() - 2, afterRelease.reserved() + 2));
+
+        ResponseEntity<String> sim = simulate(attempt.token(),
+                retry.getBody().paymentId(), "simulate-capture");
+        assertThat(sim.getStatusCode().value()).isEqualTo(200);
+        assertThat(paymentStatus(retry.getBody().paymentId())).isEqualTo("SUCCESS");
+        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("CONFIRMED");
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(afterRelease.available() - 2, afterRelease.reserved()));
+    }
+
+    @Test
+    void cancel_unpaidOrder_cancelsAttempt_andReleasesStock() {
+        Attempt attempt = readyToPay("cancel");
+        Inv before = invOf(SKU);
+
+        ResponseEntity<OrderResponse> cancelled = http.exchange(
+                "/api/v1/orders/" + attempt.order().orderId() + "/cancel",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())),
+                OrderResponse.class);
+
+        assertThat(cancelled.getStatusCode().value()).isEqualTo(200);
+        assertThat(cancelled.getBody().status()).isEqualTo("CANCELLED");
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("CANCELLED");
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(before.available() + 2, before.reserved() - 2));
+
+        // A cancelled order is dead: no new payments, no second cancel.
+        ResponseEntity<String> reinitiate = http.exchange("/api/v1/payments",
+                HttpMethod.POST,
+                new HttpEntity<>(new InitiatePaymentRequest(attempt.order().orderId()),
+                        bearer(attempt.token())), String.class);
+        assertThat(reinitiate.getStatusCode().value()).isEqualTo(409);
+        assertThat(reinitiate.getBody()).contains("INVALID_ORDER_STATE");
+        ResponseEntity<String> again = http.exchange(
+                "/api/v1/orders/" + attempt.order().orderId() + "/cancel",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())), String.class);
+        assertThat(again.getStatusCode().value()).isEqualTo(409);
+        assertThat(again.getBody()).contains("INVALID_ORDER_STATE");
+    }
+
+    @Test
+    void cancel_isOwnerScoped_andWorksWithoutAnyAttempt() {
+        // No payment ever initiated - cancel still frees the reservation.
+        String token = newUser("cancel-bare");
+        fixture(SKU, 100_000L, 10);
+        http.exchange("/api/v1/cart/items", HttpMethod.POST,
+                new HttpEntity<>(new AddItemRequest(pid(SKU), 2), bearer(token)), Void.class);
+        OrderResponse order = http.exchange("/api/v1/orders", HttpMethod.POST,
+                new HttpEntity<>(bearer(token)), OrderResponse.class).getBody();
+        Inv before = invOf(SKU);
+
+        ResponseEntity<OrderResponse> cancelled = http.exchange(
+                "/api/v1/orders/" + order.orderId() + "/cancel",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(token)), OrderResponse.class);
+
+        assertThat(cancelled.getStatusCode().value()).isEqualTo(200);
+        assertThat(cancelled.getBody().status()).isEqualTo("CANCELLED");
+        assertThat(invOf(SKU)).isEqualTo(
+                new Inv(before.available() + 2, before.reserved() - 2));
+
+        // Someone else's order is invisible to cancel, as everywhere else.
+        String intruder = newUser("intruder-cancel");
+        ResponseEntity<String> foreign = http.exchange(
+                "/api/v1/orders/" + order.orderId() + "/cancel",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(intruder)), String.class);
+        assertThat(foreign.getStatusCode().value()).isEqualTo(404);
     }
 }
