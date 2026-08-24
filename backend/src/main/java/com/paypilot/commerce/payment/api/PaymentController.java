@@ -35,6 +35,13 @@ public class PaymentController {
         return paymentService.initiate(user.userId(), request.orderId());
     }
 
+    /** Owner-scoped refund of a captured payment (money goes back). */
+    @PostMapping("/{paymentId}/refund")
+    public PaymentResponse refund(@AuthenticationPrincipal AuthenticatedUser user,
+                                  @PathVariable Long paymentId) {
+        return paymentService.refund(user.userId(), paymentId);
+    }
+
     /**
      * Gateway callback. Authenticates via HMAC signature over the raw body -
      * deliberately OUTSIDE the JWT perimeter (gateways hold no user tokens),

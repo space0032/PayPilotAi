@@ -2,7 +2,9 @@ package com.paypilot.commerce.payment.repo;
 
 import com.paypilot.commerce.payment.domain.Payment;
 import com.paypilot.commerce.payment.domain.PaymentStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,6 +20,15 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findFirstByOrderIdOrderByCreatedAtDesc(Long orderId);
 
     boolean existsByRazorpayPaymentIdAndIdNot(String razorpayPaymentId, Long id);
+
+    /**
+     * Row-locked fetch for money-moving flows: serializes concurrent
+     * refunds on the same payment so the gateway is called at most once
+     * per committed decision - the second waiter sees REFUNDED.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payment p WHERE p.id = :id")
+    Optional<Payment> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * Attempts nobody ever finished paying: still active AND past their

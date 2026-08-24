@@ -26,4 +26,12 @@ public class MockRazorpayAdapter implements PaymentGatewayPort {
         log.info("MOCK gateway order created: {} amount={} {}", id, request.amountPaise(), request.currency());
         return new GatewayOrder(id, request.amountPaise(), request.currency(), "created");
     }
+
+    @Override
+    public GatewayRefund refund(String gatewayPaymentId, long amountPaise) {
+        String id = "rfnd_mock_" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+        log.info("MOCK gateway refund created: {} payment={} amount={}",
+                id, gatewayPaymentId, amountPaise);
+        return new GatewayRefund(id, amountPaise, "processed");
+    }
 }

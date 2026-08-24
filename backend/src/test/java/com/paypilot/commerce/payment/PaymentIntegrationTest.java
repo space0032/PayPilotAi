@@ -497,4 +497,55 @@ class PaymentIntegrationTest {
                 HttpMethod.POST, new HttpEntity<>(null, bearer(intruder)), String.class);
         assertThat(foreign.getStatusCode().value()).isEqualTo(404);
     }
+
+    @Test
+    void refund_returnsMoney_flipsStatus_andIsOwnerScoped() {
+        Attempt attempt = readyToPay("refund");
+        simulate(attempt.token(), attempt.payment().paymentId(), "simulate-capture");
+        assertThat(paymentStatus(attempt.payment().paymentId())).isEqualTo("SUCCESS");
+
+        // Someone else's payment is invisible - 404 before any money moves.
+        String intruder = newUser("intruder-refund");
+        ResponseEntity<String> foreign = http.exchange(
+                "/api/v1/payments/" + attempt.payment().paymentId() + "/refund",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(intruder)), String.class);
+        assertThat(foreign.getStatusCode().value()).isEqualTo(404);
+
+        ResponseEntity<PaymentResponse> refunded = http.exchange(
+                "/api/v1/payments/" + attempt.payment().paymentId() + "/refund",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())),
+                PaymentResponse.class);
+
+        assertThat(refunded.getStatusCode().value()).isEqualTo(200);
+        assertThat(refunded.getBody().status()).isEqualTo("REFUNDED");
+        assertThat(refunded.getBody().gatewayPaymentId())
+                .startsWith("pay_sim_");
+        String refundId = jdbc.queryForObject(
+                "SELECT refund_id FROM payments WHERE id = ?",
+                String.class, attempt.payment().paymentId());
+        assertThat(refundId).startsWith("rfnd_mock_");
+        // Order stays CONFIRMED: a refund returns money, it does not un-sell.
+        assertThat(orderStatus(attempt.order().orderId())).isEqualTo("CONFIRMED");
+
+        // REFUNDED is terminal - a second refund is refused, money moved once.
+        ResponseEntity<String> again = http.exchange(
+                "/api/v1/payments/" + attempt.payment().paymentId() + "/refund",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())), String.class);
+        assertThat(again.getStatusCode().value()).isEqualTo(409);
+        assertThat(again.getBody()).contains("NOT_REFUNDABLE");
+    }
+
+    @Test
+    void refund_rejectsPaymentsThatNeverCaptured() {
+        Attempt attempt = readyToPay("refund-pending");
+
+        ResponseEntity<String> response = http.exchange(
+                "/api/v1/payments/" + attempt.payment().paymentId() + "/refund",
+                HttpMethod.POST, new HttpEntity<>(null, bearer(attempt.token())), String.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody()).contains("NOT_REFUNDABLE");
+        assertThat(paymentStatus(attempt.payment().paymentId()))
+                .isEqualTo("CREATED");
+    }
 }

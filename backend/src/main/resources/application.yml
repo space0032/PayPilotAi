@@ -63,12 +63,16 @@ paypilot:
     rate-limit:
       auth-capacity-per-minute: 10
   payments:
-    # mock = local stand-in (no account needed); live adapter comes later.
+    # mock = local stand-in (no account needed); razorpay = live REST adapter.
     gateway: ${PAYMENTS_GATEWAY:mock}
     webhook-secret: ${PAYMENTS_WEBHOOK_SECRET:local-mock-whsec-change-me}
     # Unpaid attempts older than this are expired and their stock released.
     attempt-ttl-minutes: ${PAYMENTS_ATTEMPT_TTL_MINUTES:30}
     expiry-sweep-interval-ms: ${PAYMENTS_SWEEP_INTERVAL_MS:60000}
+    razorpay:
+      base-url: ${RAZORPAY_BASE_URL:https://api.razorpay.com/v1}
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
 
   agent:
     # mock = deterministic scripted planner; live = LLM-driven decisions.

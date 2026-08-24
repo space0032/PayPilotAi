@@ -67,6 +67,10 @@ public class Payment {
     @Column(name = "failure_reason", length = 255)
     private String failureReason;
 
+    /** The gateway's own receipt for the returned money (V7). */
+    @Column(name = "refund_id", length = 64)
+    private String refundId;
+
     @Column(name = "expires_at")
     private Instant expiresAt;
 
@@ -123,6 +127,12 @@ public class Payment {
                 ? reason.substring(0, 255) : reason;
     }
 
+    /** Money went back; SUCCESS -> REFUNDED is the only legal path in. */
+    public void markRefunded(String gatewayRefundId) {
+        advance(List.of(PaymentStatus.SUCCESS, PaymentStatus.REFUNDED));
+        this.refundId = gatewayRefundId;
+    }
+
     private void advance(List<PaymentStatus> path) {
         int idx = path.indexOf(status);
         if (idx < 0) {
@@ -156,6 +166,10 @@ public class Payment {
 
     public String getRazorpayOrderId() {
         return razorpayOrderId;
+    }
+
+    public String getRefundId() {
+        return refundId;
     }
 
     public String getRazorpayPaymentId() {

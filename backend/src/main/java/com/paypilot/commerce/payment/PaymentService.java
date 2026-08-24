@@ -15,8 +15,10 @@ import com.paypilot.commerce.payment.api.dto.PaymentResponse;
 import com.paypilot.commerce.payment.domain.Payment;
 import com.paypilot.commerce.payment.domain.PaymentEvent;
 import com.paypilot.commerce.payment.domain.PaymentStatus;
+import com.paypilot.commerce.payment.gateway.GatewayException;
 import com.paypilot.commerce.payment.gateway.GatewayOrder;
 import com.paypilot.commerce.payment.gateway.GatewayOrderRequest;
+import com.paypilot.commerce.payment.gateway.GatewayRefund;
 import com.paypilot.commerce.payment.gateway.PaymentGatewayPort;
 import com.paypilot.commerce.payment.repo.PaymentEventRepository;
 import com.paypilot.commerce.payment.repo.PaymentRepository;
@@ -105,8 +107,16 @@ public class PaymentService {
         if (paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).isPresent()) {
             reReserve(order);
         }
-        GatewayOrder gatewayOrder = gatewayPort.createOrder(
-                new GatewayOrderRequest(order.getTotalPaise(), "INR", "order-" + order.getId()));
+        GatewayOrder gatewayOrder;
+        try {
+            gatewayOrder = gatewayPort.createOrder(
+                    new GatewayOrderRequest(order.getTotalPaise(), "INR", "order-" + order.getId()));
+        } catch (GatewayException e) {
+            log.error("Gateway createOrder failed for order {}: {}",
+                    order.getId(), e.getMessage());
+            throw new ConflictException("GATEWAY_UNAVAILABLE",
+                    "The payment gateway could not accept this order; try again shortly");
+        }
         if (gatewayOrder.amountPaise() != order.getTotalPaise()) {
             throw new IllegalStateException(
                     "Gateway echoed amount %d for order %d but expected %d"
@@ -339,6 +349,35 @@ public class PaymentService {
         payment.markFailed(gatewayPaymentId, reason);
         stockSettlement.releaseSale(payment.getOrderId());
         log.info("Payment {} FAILED; stock released, order stays payable", payment.getId());
+    }
+
+    /**
+     * Returns captured money to the customer. The row lock serializes
+     * concurrent refunds - the gateway is called at most once per
+     * committed decision, and a second waiter finds REFUNDED already.
+     * The order itself stays CONFIRMED: goods were sold; a refund is a
+     * money event, not an un-sale.
+     */
+    @Transactional
+    public PaymentResponse refund(Long userId, Long paymentId) {
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId)
+                .filter(p -> p.getUserId().equals(userId))
+                .orElseThrow(() -> new NotFoundException("Payment", paymentId));
+        if (payment.getStatus() != PaymentStatus.SUCCESS) {
+            throw new ConflictException("NOT_REFUNDABLE",
+                    ("Payment %d is %s; only successfully captured payments "
+                            + "can be refunded").formatted(paymentId, payment.getStatus()));
+        }
+        if (payment.getRazorpayPaymentId() == null
+                || payment.getRazorpayPaymentId().isBlank()) {
+            throw new ConflictException("NOT_REFUNDABLE",
+                    "Payment has no gateway payment reference to refund against");
+        }
+        GatewayRefund refund = gatewayPort.refund(
+                payment.getRazorpayPaymentId(), payment.getAmountPaise());
+        payment.markRefunded(refund.id());
+        log.info("Payment {} REFUNDED via gateway refund {}", paymentId, refund.id());
+        return toResponse(payment);
     }
 
     private PaymentResponse toResponse(Payment p) {

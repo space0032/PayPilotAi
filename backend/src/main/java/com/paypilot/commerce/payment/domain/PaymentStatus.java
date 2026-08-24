@@ -1,11 +1,11 @@
 package com.paypilot.commerce.payment.domain;
 
 /**
- * Payment FSM, values mirrored 1:1 by the DB CHECK constraint from V2.
- * Transitions only ever happen through {@link #canTransitionTo} so webhook
- * handlers cannot invent paths.
+ * Payment FSM, values mirrored 1:1 by the DB CHECK constraint from V2
+ * (widened by V7 for refunds). Transitions only ever happen through
+ * {@link #canTransitionTo} so webhook handlers cannot invent paths.
  *
- * CREATED -> PAYMENT_PENDING -> AUTHORIZED -> PROCESSING -> SUCCESS
+ * CREATED -> PAYMENT_PENDING -> AUTHORIZED -> PROCESSING -> SUCCESS -> REFUNDED
  *      \            \               \
  *       -> FAILED / EXPIRED / CANCELLED at every pre-SUCCESS stage
  */
@@ -16,6 +16,7 @@ public enum PaymentStatus {
     AUTHORIZED,
     PROCESSING,
     SUCCESS,
+    REFUNDED,
     FAILED,
     EXPIRED,
     CANCELLED;
@@ -29,7 +30,8 @@ public enum PaymentStatus {
             case AUTHORIZED -> target == PROCESSING || target == FAILED
                     || target == CANCELLED;
             case PROCESSING -> target == SUCCESS || target == FAILED;
-            default -> false; // terminal states: SUCCESS, FAILED, EXPIRED, CANCELLED
+            case SUCCESS -> target == REFUNDED;
+            default -> false; // terminal states: REFUNDED, FAILED, EXPIRED, CANCELLED
         };
     }
 
