@@ -22,6 +22,7 @@
         <springdoc.version>2.7.0</springdoc.version>
         <jjwt.version>0.12.6</jjwt.version>
         <bucket4j.version>8.10.1</bucket4j.version>
+        <logstash-encoder.version>8.1</logstash-encoder.version>
         <!-- Override Boot 3.4.5-managed 1.20.6: older docker-java gets HTTP 400
              from this Docker Desktop build's named-pipe proxy. -->
         <testcontainers.version>1.21.4</testcontainers.version>
@@ -96,6 +97,16 @@
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j-core</artifactId>
             <version>${bucket4j.version}</version>
+        </dependency>
+        <!-- Phase 15 observability: structured JSON logs + Prometheus metrics -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash-encoder.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
         <dependency>

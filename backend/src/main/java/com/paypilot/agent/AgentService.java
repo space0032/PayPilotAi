@@ -17,8 +17,12 @@ import com.paypilot.agent.repo.CustomerEventRepository;
 import com.paypilot.common.error.ApiException;
 import com.paypilot.common.error.ConflictException;
 import com.paypilot.common.error.NotFoundException;
+import com.paypilot.common.logging.CorrelationIdFilter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -60,6 +64,7 @@ public class AgentService {
     private final AgentPlanner planner;
     private final AgentTools tools;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meters;
 
     public AgentService(AgentSessionRepository sessions,
                         AgentToolCallRepository toolCalls,
@@ -67,7 +72,8 @@ public class AgentService {
                         CustomerEventRepository events,
                         AgentPlanner planner,
                         AgentTools tools,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        MeterRegistry meters) {
         this.sessions = sessions;
         this.toolCalls = toolCalls;
         this.messages = messages;
@@ -75,6 +81,7 @@ public class AgentService {
         this.planner = planner;
         this.tools = tools;
         this.objectMapper = objectMapper;
+        this.meters = meters;
     }
 
     public SessionTranscriptResponse startAndRun(Long userId, StartSessionRequest request) {
@@ -138,6 +145,7 @@ public class AgentService {
         sessions.save(session);
         messages.save(new AgentMessage(sessionId, AgentMessageRole.SYSTEM,
                 "User approved the purchase."));
+        countConsent("confirmed");
         return transcript(userId, sessionId);
     }
 
@@ -154,6 +162,7 @@ public class AgentService {
         }
         messages.save(new AgentMessage(sessionId, AgentMessageRole.SYSTEM,
                 "User declined the purchase."));
+        countConsent("cancelled");
         return transcript(userId, sessionId);
     }
 
@@ -183,12 +192,13 @@ public class AgentService {
             }
             AgentStep step = next.get();
             long startNanos = System.nanoTime();
-            var call = new AgentToolCall(sessionId, step.tool(), step.arguments());
+            var call = newCall(sessionId, step.tool(), step.arguments());
             try {
                 Object out = step.action().execute(tools, ctx);
                 int durationMs = elapsedMs(startNanos);
                 call.succeed(toJsonMap(out), durationMs);
                 toolCalls.save(call);
+                countToolCall(step.tool(), "OK");
                 ctx.put(step.tool(), out);
                 last = new AgentPlanner.StepOutcome(step.tool(), true, null,
                         toJsonMap(out));
@@ -197,6 +207,8 @@ public class AgentService {
                 boolean rejected = REJECTIONS.contains(e.code());
                 call.fail(e.code(), durationMs, rejected);
                 toolCalls.save(call);
+                countToolCall(step.tool(),
+                        rejected ? "REJECTED" : "ERROR");
                 last = new AgentPlanner.StepOutcome(step.tool(), false,
                         e.code(), null);
                 // A refusal is information, not termination: let the
@@ -211,6 +223,7 @@ public class AgentService {
                 int durationMs = elapsedMs(startNanos);
                 call.fail("INTERNAL_ERROR", durationMs, false);
                 toolCalls.save(call);
+                countToolCall(step.tool(), "ERROR");
                 last = new AgentPlanner.StepOutcome(step.tool(), false,
                         "INTERNAL_ERROR", null);
                 // Unexpected crash: stop feeding the planner a broken world.
@@ -220,10 +233,29 @@ public class AgentService {
         return transcript(userId, sessionId);
     }
 
+    /** Audit row stamped with the correlation id of the driving request. */
+    private AgentToolCall newCall(Long sessionId, String tool,
+                                  Map<String, Object> arguments) {
+        return new AgentToolCall(sessionId, tool, arguments,
+                MDC.get(CorrelationIdFilter.MDC_KEY));
+    }
+
+    private void countToolCall(String tool, String status) {
+        meters.counter("paypilot.agent.tool.calls",
+                List.of(Tag.of("tool", tool), Tag.of("status", status)))
+                .increment();
+    }
+
+    private void countConsent(String decision) {
+        meters.counter("paypilot.agent.consent.decisions",
+                "decision", decision).increment();
+    }
+
     private void auditPlanFailure(Long sessionId, String code) {
-        var call = new AgentToolCall(sessionId, "plan_next_step", Map.of());
+        var call = newCall(sessionId, "plan_next_step", Map.of());
         call.fail(code, 0, false);
         toolCalls.save(call);
+        countToolCall("plan_next_step", "ERROR");
     }
 
     @SuppressWarnings("unchecked")
@@ -252,7 +284,8 @@ public class AgentService {
         List<AgentToolCallView> calls =
                 toolCalls.findBySessionIdOrderByCreatedAtAscIdAsc(sessionId).stream()
                         .map(c -> new AgentToolCallView(c.getTool(), c.getArguments(),
-                                c.getResultSummary(), c.getStatus().name(), c.getError()))
+                                c.getResultSummary(), c.getStatus().name(),
+                                c.getError(), c.getCorrelationId()))
                         .toList();
         List<AgentMessageView> chat =
                 messages.findBySessionIdOrderByCreatedAtAscIdAsc(sessionId).stream()

@@ -8,5 +8,6 @@ public record AgentToolCallView(
         Map<String, Object> arguments,
         Map<String, Object> resultSummary,
         String status,
-        String error) {
+        String error,
+        String correlationId) {
 }

@@ -53,6 +53,10 @@ public class AgentToolCall {
     @Column(name = "duration_ms")
     private Integer durationMs;
 
+    /** X-Request-Id of the HTTP call that triggered this step (V8). */
+    @Column(name = "correlation_id", length = 64)
+    private String correlationId;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -62,10 +66,13 @@ public class AgentToolCall {
     }
 
     public AgentToolCall(Long sessionId, String tool,
-                         Map<String, Object> arguments) {
+                         Map<String, Object> arguments,
+                         String correlationId) {
         this.sessionId = sessionId;
         this.tool = tool;
         this.arguments = arguments == null ? Map.of() : arguments;
+        this.correlationId = correlationId != null && correlationId.length() > 64
+                ? correlationId.substring(0, 64) : correlationId;
         this.status = ToolCallStatus.OK;
     }
 
@@ -103,5 +110,9 @@ public class AgentToolCall {
 
     public String getError() {
         return error;
+    }
+
+    public String getCorrelationId() {
+        return correlationId;
     }
 }

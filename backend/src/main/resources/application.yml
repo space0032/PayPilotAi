@@ -38,7 +38,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus scrapes /actuator/prometheus; metrics for ad-hoc reads.
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: ${HEALTH_SHOW_DETAILS:never}
@@ -48,6 +49,11 @@ management:
       enabled: true
     readinessState:
       enabled: true
+  # Business meters (payments captured/failed/refunded, agent tool calls,
+  # consent decisions) are registered in code with the paypilot.* prefix.
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 springdoc:
   swagger-ui:

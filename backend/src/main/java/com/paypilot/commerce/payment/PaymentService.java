@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paypilot.commerce.catalog.repo.InventoryRepository;
 import com.paypilot.common.error.ConflictException;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.paypilot.common.error.NotFoundException;
 import com.paypilot.common.error.UnauthorizedException;
 import com.paypilot.commerce.order.domain.Order;
@@ -58,6 +59,7 @@ public class PaymentService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final java.time.Duration attemptTtl;
+    private final MeterRegistry meters;
 
     public PaymentService(PaymentRepository paymentRepository,
                           PaymentEventRepository eventRepository,
@@ -69,6 +71,7 @@ public class PaymentService {
                           WebhookSignatureVerifier signatureVerifier,
                           ObjectMapper objectMapper,
                           Clock clock,
+                          MeterRegistry meters,
                           @Value("${paypilot.payments.attempt-ttl-minutes:30}") long attemptTtlMinutes) {
         this.paymentRepository = paymentRepository;
         this.eventRepository = eventRepository;
@@ -80,6 +83,7 @@ public class PaymentService {
         this.signatureVerifier = signatureVerifier;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.meters = meters;
         this.attemptTtl = java.time.Duration.ofMinutes(attemptTtlMinutes);
     }
 
@@ -109,8 +113,10 @@ public class PaymentService {
         }
         GatewayOrder gatewayOrder;
         try {
-            gatewayOrder = gatewayPort.createOrder(
-                    new GatewayOrderRequest(order.getTotalPaise(), "INR", "order-" + order.getId()));
+            gatewayOrder = meters.timer("paypilot.gateway.requests", "op", "create_order")
+                    .record(() -> gatewayPort.createOrder(
+                            new GatewayOrderRequest(order.getTotalPaise(), "INR",
+                                    "order-" + order.getId())));
         } catch (GatewayException e) {
             log.error("Gateway createOrder failed for order {}: {}",
                     order.getId(), e.getMessage());
@@ -286,6 +292,7 @@ public class PaymentService {
             return;
         }
         payment.markCaptured(gatewayPaymentId);
+        meters.counter("paypilot.payments.captured").increment();
         Order order = orderRepository.findById(payment.getOrderId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Captured payment references missing order %d"
@@ -347,6 +354,7 @@ public class PaymentService {
         String reason = root.path("payload").path("payment").path("entity")
                 .path("error_description").asText("gateway reported failure");
         payment.markFailed(gatewayPaymentId, reason);
+        meters.counter("paypilot.payments.failed").increment();
         stockSettlement.releaseSale(payment.getOrderId());
         log.info("Payment {} FAILED; stock released, order stays payable", payment.getId());
     }
@@ -373,9 +381,11 @@ public class PaymentService {
             throw new ConflictException("NOT_REFUNDABLE",
                     "Payment has no gateway payment reference to refund against");
         }
-        GatewayRefund refund = gatewayPort.refund(
-                payment.getRazorpayPaymentId(), payment.getAmountPaise());
+        GatewayRefund refund = meters.timer("paypilot.gateway.requests", "op", "refund")
+                .record(() -> gatewayPort.refund(
+                        payment.getRazorpayPaymentId(), payment.getAmountPaise()));
         payment.markRefunded(refund.id());
+        meters.counter("paypilot.payments.refunded").increment();
         log.info("Payment {} REFUNDED via gateway refund {}", paymentId, refund.id());
         return toResponse(payment);
     }

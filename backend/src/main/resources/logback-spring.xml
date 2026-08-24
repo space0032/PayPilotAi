@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Human-readable console output for local development.
-         Structured JSON logging arrives in Phase 15 (observability);
-         the MDC keys used here stay identical when we switch encoders. -->
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [req=%X{requestId:-}] %logger{40} - %msg%n</pattern>
-        </encoder>
-    </appender>
+    <!-- Phase 15: two console encoders, picked by Spring profile.
+         Default: human-readable for local development.
+         "json-logs" profile: one structured JSON object per line with MDC
+         (requestId correlation id) embedded - what a log shipper ingests
+         in production. The MDC keys are identical under both encoders,
+         so switching profiles changes format, never semantics. -->
+    <springProfile name="json-logs">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+        </appender>
+    </springProfile>
+
+    <springProfile name="!json-logs">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [req=%X{requestId:-}] %logger{40} - %msg%n</pattern>
+            </encoder>
+        </appender>
+    </springProfile>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
