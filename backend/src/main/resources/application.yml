@@ -75,12 +75,18 @@ paypilot:
     planner: ${AGENT_PLANNER:mock}
     # Hard ceiling on any single purchase the agent may make.
     max-spend-paise: ${AGENT_MAX_SPEND_PAISE:1000000}
+    # Rolling-24h ceiling across all of a user's sessions combined.
+    daily-spend-cap-paise: ${AGENT_DAILY_SPEND_CAP_PAISE:2000000}
+    # An unanswered consent ask expires after this window (terminal EXPIRED).
+    consent-ttl-minutes: ${AGENT_CONSENT_TTL_MINUTES:30}
+    consent-sweep-interval-ms: ${AGENT_CONSENT_SWEEP_INTERVAL_MS:60000}
     llm:
-      # none = no LLM bean at all; openai-compatible = /chat/completions dialect.
+      # none = no LLM bean at all; openai-compatible = /chat/completions dialect
+      # (OpenRouter and Ollama both speak it - see .env.example).
       provider: ${AGENT_LLM_PROVIDER:none}
-      base-url: ${AGENT_LLM_BASE_URL:https://api.openai.com/v1}
-      api-key: ${AGENT_LLM_API_KEY:}
-      model: ${AGENT_LLM_MODEL:gpt-4o-mini}
+      base-url: ${AGENT_LLM_BASE_URL:${OPENROUTER_BASE_URL:${OLLAMA_BASE_URL:https://api.openai.com/v1}}}
+      api-key: ${AGENT_LLM_API_KEY:${OPENROUTER_API_KEY:}}
+      model: ${AGENT_LLM_MODEL:${OPENROUTER_MODEL:${OLLAMA_MODEL:gpt-4o-mini}}}
 
 logging:
   level:

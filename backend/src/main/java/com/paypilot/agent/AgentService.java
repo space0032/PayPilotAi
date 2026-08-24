@@ -47,7 +47,8 @@ public class AgentService {
 
     /** Error codes that represent the guardrails refusing, not failing. */
     private static final Set<String> REJECTIONS = Set.of(
-            "SPEND_CAP_EXCEEDED", "PURCHASE_CONSENT_REQUIRED");
+            "SPEND_CAP_EXCEEDED", "PURCHASE_CONSENT_REQUIRED",
+            "DAILY_SPEND_CAP_EXCEEDED");
 
     /** Hard ceiling on decisions per run; runaway planners stop here. */
     private static final int MAX_STEPS_PER_RUN = 20;

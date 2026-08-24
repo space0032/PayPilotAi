@@ -14,4 +14,18 @@ public interface CustomerEventRepository extends JpaRepository<CustomerEvent, Lo
             WHERE session_id = :sessionId AND type = 'SPEND_RESERVED'
             """, nativeQuery = true)
     long sumReservedSpend(@Param("sessionId") Long sessionId);
+
+    /**
+     * Rolling-window spend for one user across ALL sessions - the daily
+     * cap input. Timezone-free by design: the caller passes a cutoff
+     * instant (now minus 24h), no calendar-day ambiguity.
+     */
+    @Query(value = """
+            SELECT COALESCE(SUM((payload->>'amountPaise')::bigint), 0)
+            FROM customer_events
+            WHERE user_id = :userId AND type = 'SPEND_RESERVED'
+              AND created_at >= :since
+            """, nativeQuery = true)
+    long sumUserSpendSince(@Param("userId") Long userId,
+                           @Param("since") java.time.Instant since);
 }

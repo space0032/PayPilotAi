@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -151,9 +152,19 @@ class AgentLivePlannerIntegrationTest {
     JdbcTemplate jdbc;
     @Autowired
     TransactionTemplate tx;
+    @Autowired
+    ConsentReconciliationService sweeper;
 
     private static final String SKU = "SHOE-NK-DOWN12";
     private static final long CAP_PAISE = 1_000_000L;
+
+    @BeforeEach
+    void drainStubQueues() {
+        // A guardrail break mid-run leaves scripted decisions queued;
+        // never let one test's leftovers leak into the next.
+        REPLIES.clear();
+        AUTH_HEADERS.clear();
+    }
 
     private String newUser(String label) {
         String email = label + "-" + System.nanoTime() + "@example.com";
@@ -378,6 +389,97 @@ class AgentLivePlannerIntegrationTest {
         assertThat(last.get("error")).isEqualTo("PLANNER_ERROR");
         assertThat(transcript.get("consentState")).isEqualTo("NONE");
         assertThat(((Number) transcript.get("reservedSpend")).doubleValue())
+                .isEqualTo(0.00);
+    }
+
+    @Test
+    void expired_consent_refuses_payment() {
+        String token = newUser("agent-late");
+        String title = "Agentic Stale Shoe " + System.nanoTime();
+        seed(title, 300_000L, 6);
+        Long productId = pid();
+
+        scriptBrowseToConsentAsk(productId, title, 300_000L);
+        Map<String, Object> paused = post(token, "/api/v1/agent/sessions",
+                Map.of("goal", title));
+        long sessionId = ((Number) paused.get("sessionId")).longValue();
+        assertThat(paused.get("consentState")).isEqualTo("REQUESTED");
+
+        // The TTL sweeper reclaims the unanswered ask.
+        jdbc.update("UPDATE agent_sessions SET updated_at = "
+                + "now() - INTERVAL '1 hour' WHERE id = ?", sessionId);
+        assertThat(sweeper.expireStaleConsents()).isGreaterThanOrEqualTo(1);
+        assertThat(get(token, "/api/v1/agent/sessions/" + sessionId)
+                .get("consentState")).isEqualTo("EXPIRED");
+
+        // A late "yes" from the model cannot resurrect it - and even a
+        // direct payment attempt is refused as a guardrail rejection.
+        long orderId = ((Number) ((Map<String, Object>)
+                callsOf(paused).get(2).get("resultSummary"))
+                .get("orderId")).longValue();
+        modelWill(
+                jsonDecision("initiate_payment",
+                        Map.of("orderId", orderId)),
+                jsonDecision("done", Map.of()));
+        Map<String, Object> after = post(token,
+                "/api/v1/agent/sessions/" + sessionId + "/run", Map.of());
+
+        assertThat(after.get("consentState")).isEqualTo("EXPIRED");
+        var calls = callsOf(after);
+        Map<String, Object> last = calls.get(calls.size() - 1);
+        assertThat(last.get("tool")).isEqualTo("initiate_payment");
+        assertThat(last.get("status")).isEqualTo("REJECTED");
+        assertThat(last.get("error"))
+                .isEqualTo("PURCHASE_CONSENT_REQUIRED");
+        assertThat(((Number) after.get("reservedSpend")).doubleValue())
+                .isEqualTo(0.00);
+    }
+
+    @Test
+    void daily_cap_refuses_purchase_when_rolling_24h_spend_exceeds_ceiling() {
+        String token = newUser("agent-dailycap");
+        String title = "Agentic Daily Shoe " + System.nanoTime();
+        seed(title, 300_000L, 6);
+        Long productId = pid();
+
+        scriptBrowseToConsentAsk(productId, title, 300_000L);
+        Map<String, Object> paused = post(token, "/api/v1/agent/sessions",
+                Map.of("goal", title));
+        long sessionId = ((Number) paused.get("sessionId")).longValue();
+        long orderId = ((Number) ((Map<String, Object>)
+                callsOf(paused).get(2).get("resultSummary"))
+                .get("orderId")).longValue();
+
+        // The owner already spent Rs 9,000.01 + Rs 9,000.01 today across
+        // earlier sessions; one more Rs 3,000 would pass the per-purchase
+        // cap but breach the rolling-24h ceiling of Rs 20,000.
+        Long userId = jdbc.queryForObject(
+                "SELECT user_id FROM agent_sessions WHERE id = ?",
+                Long.class, sessionId);
+        for (int i = 0; i < 2; i++) {
+            jdbc.update("""
+                    INSERT INTO customer_events (user_id, session_id, type, payload)
+                    VALUES (?, NULL, 'SPEND_RESERVED', '{"amountPaise":900001}')
+                    """, userId);
+        }
+
+        post(token, "/api/v1/agent/sessions/" + sessionId
+                + "/consent/confirm", Map.of());
+        modelWill(
+                jsonDecision("initiate_payment",
+                        Map.of("orderId", orderId)),
+                jsonDecision("done", Map.of()));
+        Map<String, Object> after = post(token,
+                "/api/v1/agent/sessions/" + sessionId + "/run", Map.of());
+
+        var calls = callsOf(after);
+        Map<String, Object> last = calls.get(calls.size() - 1);
+        assertThat(last.get("tool")).isEqualTo("initiate_payment");
+        assertThat(last.get("status")).isEqualTo("REJECTED");
+        assertThat(last.get("error")).isEqualTo("DAILY_SPEND_CAP_EXCEEDED");
+        // This session itself moved nothing; the seeded events are the
+        // user's history, not its ledger.
+        assertThat(((Number) after.get("reservedSpend")).doubleValue())
                 .isEqualTo(0.00);
     }
 }

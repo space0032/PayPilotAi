@@ -49,6 +49,8 @@ public class AgentTools {
     private final AgentMessageRepository messages;
     private final CustomerEventRepository events;
     private final long maxSpendPaise;
+    private final long dailyCapPaise;
+    private final java.time.Clock clock;
 
     public AgentTools(CatalogService catalogService,
                       CartService cartService,
@@ -58,7 +60,10 @@ public class AgentTools {
                       AgentMessageRepository messages,
                       CustomerEventRepository events,
                       @Value("${paypilot.agent.max-spend-paise:1000000}")
-                      long maxSpendPaise) {
+                      long maxSpendPaise,
+                      @Value("${paypilot.agent.daily-spend-cap-paise:2000000}")
+                      long dailyCapPaise,
+                      java.time.Clock clock) {
         this.catalogService = catalogService;
         this.cartService = cartService;
         this.orderService = orderService;
@@ -67,6 +72,8 @@ public class AgentTools {
         this.messages = messages;
         this.events = events;
         this.maxSpendPaise = maxSpendPaise;
+        this.dailyCapPaise = dailyCapPaise;
+        this.clock = clock;
     }
 
     public List<ProductSummary> search(String term) {
@@ -133,6 +140,16 @@ public class AgentTools {
             throw new ConflictException("SPEND_CAP_EXCEEDED",
                     ("Order total %d paise exceeds the per-purchase cap of %d paise")
                             .formatted(totalPaise, maxSpendPaise));
+        }
+        // Rolling-24h ceiling across every session this user owns: many
+        // small approvals must not add up to one large loss.
+        long spentTodayPaise = events.sumUserSpendSince(
+                userId, java.time.Instant.now(clock).minusSeconds(86_400));
+        if (spentTodayPaise + totalPaise > dailyCapPaise) {
+            throw new ConflictException("DAILY_SPEND_CAP_EXCEEDED",
+                    ("Purchase would take the rolling-24h spend to %d paise, "
+                            + "past the %d paise daily cap")
+                            .formatted(spentTodayPaise + totalPaise, dailyCapPaise));
         }
         PaymentResponse payment = paymentService.initiate(userId, orderId);
         session.consumeConsent();
