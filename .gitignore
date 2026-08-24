@@ -27,3 +27,4 @@ Thumbs.db
 backend/boot.err
 backend/boot.log
 backend/boot.pid
+frontend/tsconfig.tsbuildinfo
