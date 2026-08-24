@@ -5,12 +5,17 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+
+import com.paypilot.agent.AgentPlanner.StepOutcome;
 
 /**
  * Deterministic stand-in for the LLM planner (paypilot.agent.planner=mock).
- * Scripts the canonical journey INCLUDING the consent ladder: the agent
- * must formally request spending approval and receive it before payment -
- * exactly the steps a live model will be required to take.
+ * Walks the canonical journey - search, add, checkout, consent ladder,
+ * pay, capture, verify - reading each step's output from the shared
+ * context. The step sequence is identical to what a live model is
+ * expected to choose, so orchestration/audit/guardrail behavior is
+ * exercised identically in both modes.
  */
 @Component
 @ConditionalOnProperty(name = "paypilot.agent.planner", havingValue = "mock",
@@ -18,7 +23,24 @@ import java.util.Map;
 public class MockAgentPlanner implements AgentPlanner {
 
     @Override
-    public List<AgentStep> plan(Long sessionId, Long userId, String goal) {
+    public PlanSession begin(Long sessionId, Long userId, String title,
+                             List<Map<String, Object>> history) {
+        List<AgentStep> script = script(sessionId, userId, title);
+        return new PlanSession() {
+            private int cursor = 0;
+
+            @Override
+            public Optional<AgentStep> next(Map<String, Object> ctx,
+                                           StepOutcome last) {
+                if (cursor >= script.size()) {
+                    return Optional.empty();
+                }
+                return Optional.of(script.get(cursor++));
+            }
+        };
+    }
+
+    private List<AgentStep> script(Long sessionId, Long userId, String goal) {
         return List.of(
                 new AgentStep("search_products", Map.of("term", goal),
                         (tools, ctx) -> {
@@ -56,15 +78,16 @@ public class MockAgentPlanner implements AgentPlanner {
                             tools.requestConsent(userId, sessionId, amountPaise);
                             return Map.of("state", "REQUESTED");
                         }),
+                // The mock planner plays the approving human immediately.
+                // A live session stops here and waits for the real one.
                 new AgentStep("confirm_purchase_consent", Map.of(),
                         (tools, ctx) -> {
-                            // Mock mode: the planner plays the approving user.
                             tools.confirmConsent(userId, sessionId);
                             return Map.of("state", "CONFIRMED");
                         }),
                 new AgentStep("initiate_payment", Map.of(),
                         (tools, ctx) -> {
-                            long orderId = (Long) ctx.get("orderId");
+                            long orderId = orderId(ctx);
                             var payment = tools.pay(userId, sessionId, orderId);
                             ctx.put("paymentId", payment.paymentId());
                             return Map.of(
@@ -75,24 +98,38 @@ public class MockAgentPlanner implements AgentPlanner {
                         }),
                 new AgentStep("confirm_mock_payment", Map.of(),
                         (tools, ctx) -> {
-                            long paymentId = (Long) ctx.get("paymentId");
+                            long paymentId = ((Number) ctx.get("paymentId")).longValue();
                             tools.confirmMockPayment(userId, paymentId);
                             return Map.of("confirmed", true);
                         }),
                 new AgentStep("get_order_status", Map.of(),
                         (tools, ctx) -> {
-                            long orderId = (Long) ctx.get("orderId");
+                            long orderId = orderId(ctx);
                             var order = tools.orderStatus(userId, orderId);
                             return Map.of("status", order.status());
                         }));
     }
 
-    private long chosenProductId(Map<String, Object> ctx) {
-        var search = (Map<?, ?>) ctx.get("search_products");
-        if (search == null || !search.containsKey("productId")) {
-            throw new IllegalStateException("No product was selected by search");
+    /** Resume support: a paused run picks up where its trace left off. */
+    private static long chosenProductId(Map<String, Object> ctx) {
+        return number(ctx, "search_products", "productId");
+    }
+
+    private static long orderId(Map<String, Object> ctx) {
+        return number(ctx, "checkout", "orderId");
+    }
+
+    private static long number(Map<String, Object> ctx, String step, String field) {
+        Object fromCtx = ctx.get(step);
+        if (fromCtx == null && ctx.containsKey(field)) {
+            return ((Number) ctx.get(field)).longValue();
         }
-        return ((Number) search.get("productId")).longValue();
+        var result = (Map<?, ?>) fromCtx;
+        if (!result.containsKey(field)) {
+            throw new IllegalStateException(
+                    "No %s was recorded by an earlier %s step".formatted(field, step));
+        }
+        return ((Number) result.get(field)).longValue();
     }
 
     private long paise(String rupees) {

@@ -68,6 +68,11 @@ public class AgentSession {
         advance(ConsentState.CONSUMED);
     }
 
+    /** The human declines or withdraws before paying. */
+    public void cancelConsent() {
+        advance(ConsentState.CANCELLED);
+    }
+
     private void advance(ConsentState target) {
         if (!consentState.canTransitionTo(target)) {
             throw new IllegalStateException(

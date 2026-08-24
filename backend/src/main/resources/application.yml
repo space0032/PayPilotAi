@@ -71,10 +71,16 @@ paypilot:
     expiry-sweep-interval-ms: ${PAYMENTS_SWEEP_INTERVAL_MS:60000}
 
   agent:
-    # mock = deterministic scripted planner; live LLM planner comes later.
+    # mock = deterministic scripted planner; live = LLM-driven decisions.
     planner: ${AGENT_PLANNER:mock}
     # Hard ceiling on any single purchase the agent may make.
     max-spend-paise: ${AGENT_MAX_SPEND_PAISE:1000000}
+    llm:
+      # none = no LLM bean at all; openai-compatible = /chat/completions dialect.
+      provider: ${AGENT_LLM_PROVIDER:none}
+      base-url: ${AGENT_LLM_BASE_URL:https://api.openai.com/v1}
+      api-key: ${AGENT_LLM_API_KEY:}
+      model: ${AGENT_LLM_MODEL:gpt-4o-mini}
 
 logging:
   level:

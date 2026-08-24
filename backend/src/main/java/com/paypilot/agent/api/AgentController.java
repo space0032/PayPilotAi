@@ -15,9 +15,11 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Agent endpoints. Sessions run synchronously for now (mock planner);
- * ownership is enforced in the service - a transcript is only ever
- * visible to the user whose goal produced it.
+ * Agent endpoints. Sessions run synchronously and pause for the human:
+ * a live run stops at REQUESTED consent, the user answers through
+ * consent/confirm or consent/cancel, then POST /run continues the
+ * journey from the persisted trace. Ownership is enforced in the
+ * service - a transcript is only ever visible to its own user.
  */
 @RestController
 @RequestMapping("/api/v1/agent/sessions")
@@ -34,6 +36,27 @@ public class AgentController {
     public SessionTranscriptResponse start(@AuthenticationPrincipal AuthenticatedUser user,
                                            @RequestBody StartSessionRequest request) {
         return agentService.startAndRun(user.userId(), request);
+    }
+
+    /** Resume/continue a paused session (after consent was answered). */
+    @PostMapping("/{sessionId}/run")
+    public SessionTranscriptResponse run(@AuthenticationPrincipal AuthenticatedUser user,
+                                         @PathVariable Long sessionId) {
+        return agentService.run(user.userId(), sessionId);
+    }
+
+    @PostMapping("/{sessionId}/consent/confirm")
+    public SessionTranscriptResponse confirmConsent(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable Long sessionId) {
+        return agentService.confirmConsent(user.userId(), sessionId);
+    }
+
+    @PostMapping("/{sessionId}/consent/cancel")
+    public SessionTranscriptResponse cancelConsent(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable Long sessionId) {
+        return agentService.cancelConsent(user.userId(), sessionId);
     }
 
     @GetMapping("/{sessionId}")
