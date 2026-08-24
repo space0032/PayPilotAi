@@ -30,12 +30,12 @@ tables); later migrations only activate/extend what each phase needs.
 | 12 | `4184ec8` | Guardrails completed: consent TTL sweeper (REQUESTED→EXPIRED with audit note), rolling-24h daily spend cap from the customer_events ledger, OpenRouter/Ollama env wiring |
 | 13 | `708eb5a` | React frontend: browse/search, cart→checkout→orders, agent chat with audited tool-call trace and consent approve/decline wired to /run + /consent endpoints |
 | 14 | `e02a938` | Live Razorpay REST adapter behind PaymentGatewayPort (Basic auth, orders + refunds APIs, outage→GATEWAY_UNAVAILABLE); refund flow: SUCCESS→REFUNDED FSM step, row-lock serialization, persisted gateway refund receipt |
+| 15 | `98649d1` | Observability: JSON logging (json-logs profile), Prometheus at /actuator/prometheus with business meters (payments lifecycle, gateway latency, agent tool calls by outcome, consent decisions), correlation ids stamped into audited tool-call rows and surfaced via the transcript API |
 
 ## Remaining
 
 | Phase | Scope |
 |-------|-------|
-| 15 | Observability: structured JSON logging, actuator metrics, correlation ids threaded through agent transcripts |
 | 16 | Security hardening: trusted-proxy rate-limit keys (X-Forwarded-For), CORS for frontend origin, validation sweep |
 | 17 | Deployment: multi-stage Dockerfile, compose prod profile, CI pipeline (build + test + image) |
 | 18 | Performance: load tests on hot paths (search/cart/checkout/webhook), connection-pool and index tuning |
