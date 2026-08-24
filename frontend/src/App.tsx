@@ -1,26 +1,68 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
+import AgentChat from './AgentChat'
+import AuthPanel from './AuthPanel'
+import Cart from './Cart'
+import Catalog from './Catalog'
+import Orders from './Orders'
+import { auth } from './api'
 
-interface Health {
-  status: string
-}
+type Tab = 'browse' | 'cart' | 'orders' | 'agent'
 
 export default function App() {
-  const [backendStatus, setBackendStatus] = useState<string>('checking…')
+  const [tab, setTab] = useState<Tab>('agent')
+  const [cartTick, setCartTick] = useState(0)
+  const bumpCart = useCallback(() => setCartTick((t) => t + 1), [])
 
-  useEffect(() => {
-    fetch('/actuator/health')
-      .then((r) => r.json())
-      .then((h: Health) => setBackendStatus(h.status))
-      .catch(() => setBackendStatus('unreachable'))
-  }, [])
+  if (!auth.loggedIn) {
+    return (
+      <main className="shell">
+        <header>
+          <h1>PayPilot</h1>
+          <p className="muted">An AI agent that shops for you — with your permission.</p>
+        </header>
+        <AuthPanel />
+      </main>
+    )
+  }
 
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 720, margin: '4rem auto', padding: '0 1rem' }}>
-      <h1>PayPilot AI</h1>
-      <p>Autonomous commerce agent — scaffold placeholder (UI arrives in later phases).</p>
-      <p>
-        Backend health: <strong data-testid="backend-status">{backendStatus}</strong>
-      </p>
+    <main className="shell">
+      <header className="topbar">
+        <h1>PayPilot</h1>
+        <nav>
+          {(['agent', 'browse', 'cart', 'orders'] as const).map((t) => (
+            <button
+              key={t}
+              className={`tab ${tab === t ? 'active' : ''}`}
+              onClick={() => setTab(t)}
+            >
+              {t === 'agent'
+                ? '🤖 Agent'
+                : t === 'browse'
+                  ? 'Browse'
+                  : t === 'cart'
+                    ? `Cart${cartTick > 0 ? '' : ''}`
+                    : 'Orders'}
+            </button>
+          ))}
+        </nav>
+        <button
+          className="ghost"
+          onClick={() => {
+            auth.clear()
+            window.location.reload()
+          }}
+        >
+          Sign out
+        </button>
+      </header>
+
+      {tab === 'agent' && <AgentChat />}
+      {tab === 'browse' && <Catalog onCartChanged={bumpCart} />}
+      {tab === 'cart' && (
+        <Cart key={cartTick} onCartChanged={bumpCart} onCheckedOut={bumpCart} />
+      )}
+      {tab === 'orders' && <Orders key={cartTick} />}
     </main>
   )
 }
