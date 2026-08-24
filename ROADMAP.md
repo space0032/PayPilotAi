@@ -27,14 +27,14 @@ tables); later migrations only activate/extend what each phase needs.
 | 9 | `128166e` | Webhook hardening: event-id dedupe ledger, payment.authorized, expiry sweeper, order cancellation vs captures, StockSettlement extraction |
 | 10 | `8e8165d` | Agent foundation: audited tool layer over V2 agent tables, consent FSM gate, per-purchase spend cap, mock scripted planner, paged order history |
 | 11 | `bc49ada` | Live LLM planner: cursor-style decisions over openai-compatible adapter, human-in-the-loop pause/resume via consent API, runaway-planner ceilings |
+| 12 | `4184ec8` | Guardrails completed: consent TTL sweeper (REQUESTED→EXPIRED with audit note), rolling-24h daily spend cap from the customer_events ledger, OpenRouter/Ollama env wiring |
+| 13 | `708eb5a` | React frontend: browse/search, cart→checkout→orders, agent chat with audited tool-call trace and consent approve/decline wired to /run + /consent endpoints |
+| 14 | `e02a938` | Live Razorpay REST adapter behind PaymentGatewayPort (Basic auth, orders + refunds APIs, outage→GATEWAY_UNAVAILABLE); refund flow: SUCCESS→REFUNDED FSM step, row-lock serialization, persisted gateway refund receipt |
 
 ## Remaining
 
 | Phase | Scope |
 |-------|-------|
-| 12 | Agent completion: consent TTL sweeper (REQUESTED→EXPIRED), rolling-24h daily spend cap via customer_events ledger, OpenRouter/Ollama env wiring |
-| 13 | Frontend React app: product browse, cart, checkout, agent chat UI with consent approve/deny wired to /run + /consent endpoints |
-| 14 | Real Razorpay gateway adapter (orders/payments APIs) behind the existing port; refund flow |
 | 15 | Observability: structured JSON logging, actuator metrics, correlation ids threaded through agent transcripts |
 | 16 | Security hardening: trusted-proxy rate-limit keys (X-Forwarded-For), CORS for frontend origin, validation sweep |
 | 17 | Deployment: multi-stage Dockerfile, compose prod profile, CI pipeline (build + test + image) |
@@ -50,3 +50,5 @@ tables); later migrations only activate/extend what each phase needs.
   no session FK by schema law).
 - Consent TTL anchored to `agent_sessions.updated_at` until a dedicated
   column ever becomes lawful.
+- Refunds are full-amount only; partial refunds would need an amounts table
+  rather than the single `refund_id` column V7 added.
