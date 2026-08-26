@@ -8,6 +8,12 @@ spring:
     password: ${DB_PASSWORD:paypilot}
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: ${DB_MIN_IDLE:2}
+      idle-timeout: ${DB_IDLE_TIMEOUT_MS:300000}
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1800000}
+      # Log any connection held open longer than 30 seconds — a reliable
+      # signal that a transaction forgot to release.
+      leak-detection-threshold: ${DB_LEAK_THRESHOLD_MS:30000}
       # Hikari exposes these as raw millisecond longs - no duration suffix.
       connection-timeout: 3000
       validation-timeout: 1000
@@ -19,6 +25,12 @@ spring:
     open-in-view: false
     properties:
       hibernate.jdbc.time_zone: UTC
+      # Batch writes for the audit-heavy agent and payment paths:
+      # Hibernate will flush up to 32 INSERTs in one JDBC batch instead
+      # of issuing one statement per entity save.
+      hibernate.jdbc.batch_size: 32
+      hibernate.order_inserts: true
+      hibernate.order_updates: true
 
   flyway:
     enabled: true
