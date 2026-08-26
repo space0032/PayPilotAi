@@ -35,12 +35,11 @@ tables); later migrations only activate/extend what each phase needs.
 | 17 | `d91ed64` | Deployment: multi-stage Dockerfile (JDK 21 builder + JRE-only runtime with Maven cache), prod compose profile (hidden internal ports, env-file secrets, health checks), GitHub Actions CI pipeline (test gate on every push/PR, GHCR image build+push on merge to main) |
 | 18 | `496102c` | Performance: V9 targeted indexes (payment expiry sweeper, agent transcript resume, daily spend cap, per-session reserved spend), HikariCP production tuning (min-idle, idle-timeout, max-lifetime, leak detection), Hibernate batch writes (batch_size=32), concurrent load tests on 4 hot paths using Java 21 virtual threads |
 | 19 | HEAD | Multi-currency: V10 migration adds ISO 4217 currency columns to products/orders/order_items (VARCHAR(3) with CHECK constraint), CurrencyConverter port + InMemoryCurrencyConverter (env-configurable rates), product listing/detail endpoints accept ?currency for live conversion, orders inherit product currency at checkout |
+| 20 | HEAD | Launch polish: comprehensive README with architecture diagram, API reference, and guardrails model; end-to-end demo script (demo.ps1); .env.example updated with multi-currency and deployment vars |
 
 ## Remaining
 
-| Phase | Scope |
-|-------|-------|
-| 20 | Launch polish: README/docs rewrite, demo script, seed-data curation |
+*All 20 phases shipped.* See the debt ledger below for known trade-offs carried into production.
 
 ## Debt ledger (carried until resolved)
 
