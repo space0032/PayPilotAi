@@ -31,12 +31,12 @@ tables); later migrations only activate/extend what each phase needs.
 | 13 | `708eb5a` | React frontend: browse/search, cart→checkout→orders, agent chat with audited tool-call trace and consent approve/decline wired to /run + /consent endpoints |
 | 14 | `e02a938` | Live Razorpay REST adapter behind PaymentGatewayPort (Basic auth, orders + refunds APIs, outage→GATEWAY_UNAVAILABLE); refund flow: SUCCESS→REFUNDED FSM step, row-lock serialization, persisted gateway refund receipt |
 | 15 | `98649d1` | Observability: JSON logging (json-logs profile), Prometheus at /actuator/prometheus with business meters (payments lifecycle, gateway latency, agent tool calls by outcome, consent decisions), correlation ids stamped into audited tool-call rows and surfaced via the transcript API |
+| 16 | `402620c` | Security hardening: CIDR-aware trusted-proxy client IP resolution (spoofed XFF cannot split rate-limit buckets unless proxy is explicitly trusted), OPTIONS preflights excluded from rate limiting, CORS policy for frontend origin, validation gap in AgentController sealed |
 
 ## Remaining
 
 | Phase | Scope |
 |-------|-------|
-| 16 | Security hardening: trusted-proxy rate-limit keys (X-Forwarded-For), CORS for frontend origin, validation sweep |
 | 17 | Deployment: multi-stage Dockerfile, compose prod profile, CI pipeline (build + test + image) |
 | 18 | Performance: load tests on hot paths (search/cart/checkout/webhook), connection-pool and index tuning |
 | 19 | Resilience: gateway outage drills, webhook replay storms, sweeper chaos tests |
@@ -52,3 +52,6 @@ tables); later migrations only activate/extend what each phase needs.
   column ever becomes lawful.
 - Refunds are full-amount only; partial refunds would need an amounts table
   rather than the single `refund_id` column V7 added.
+- Rate-limit buckets live in-memory (ConcurrentHashMap). A single restart
+  resets every bucket. Horizontal scaling requires a shared Redis-backed
+  bucket store (tracked as hardening debt).
