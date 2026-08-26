@@ -33,14 +33,13 @@ tables); later migrations only activate/extend what each phase needs.
 | 15 | `98649d1` | Observability: JSON logging (json-logs profile), Prometheus at /actuator/prometheus with business meters (payments lifecycle, gateway latency, agent tool calls by outcome, consent decisions), correlation ids stamped into audited tool-call rows and surfaced via the transcript API |
 | 16 | `402620c` | Security hardening: CIDR-aware trusted-proxy client IP resolution (spoofed XFF cannot split rate-limit buckets unless proxy is explicitly trusted), OPTIONS preflights excluded from rate limiting, CORS policy for frontend origin, validation gap in AgentController sealed |
 | 17 | `d91ed64` | Deployment: multi-stage Dockerfile (JDK 21 builder + JRE-only runtime with Maven cache), prod compose profile (hidden internal ports, env-file secrets, health checks), GitHub Actions CI pipeline (test gate on every push/PR, GHCR image build+push on merge to main) |
-| 18 | HEAD | Performance: V9 targeted indexes (payment expiry sweeper, agent transcript resume, daily spend cap, per-session reserved spend), HikariCP production tuning (min-idle, idle-timeout, max-lifetime, leak detection), Hibernate batch writes (batch_size=32), concurrent load tests on 4 hot paths using Java 21 virtual threads |
+| 18 | `496102c` | Performance: V9 targeted indexes (payment expiry sweeper, agent transcript resume, daily spend cap, per-session reserved spend), HikariCP production tuning (min-idle, idle-timeout, max-lifetime, leak detection), Hibernate batch writes (batch_size=32), concurrent load tests on 4 hot paths using Java 21 virtual threads |
+| 19 | HEAD | Multi-currency: V10 migration adds ISO 4217 currency columns to products/orders/order_items (VARCHAR(3) with CHECK constraint), CurrencyConverter port + InMemoryCurrencyConverter (env-configurable rates), product listing/detail endpoints accept ?currency for live conversion, orders inherit product currency at checkout |
 
 ## Remaining
 
 | Phase | Scope |
 |-------|-------|
-| 19 | Multi-currency support: currency column, conversion provider, per-product pricing |
-| 19 | Resilience: gateway outage drills, webhook replay storms, sweeper chaos tests |
 | 20 | Launch polish: README/docs rewrite, demo script, seed-data curation |
 
 ## Debt ledger (carried until resolved)
