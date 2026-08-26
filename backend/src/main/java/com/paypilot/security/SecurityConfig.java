@@ -2,6 +2,7 @@ package com.paypilot.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paypilot.common.logging.CorrelationIdFilter;
+import com.paypilot.security.cors.CorsProperties;
 import com.paypilot.security.jwt.JwtAuthFilter;
 import com.paypilot.security.ratelimit.RateLimitFilter;
 import jakarta.servlet.http.HttpServletResponse;
@@ -18,7 +19,11 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,6 +41,7 @@ public class SecurityConfig {
                                     JwtAuthFilter jwtAuthFilter,
                                     RateLimitFilter rateLimitFilter) throws Exception {
         http
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -65,6 +71,25 @@ public class SecurityConfig {
     @Bean
     PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    private final CorsProperties corsProperties;
+
+    public SecurityConfig(CorsProperties corsProperties) {
+        this.corsProperties = corsProperties;
+    }
+
+    @Bean
+    CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.copyOf(corsProperties.allowedOrigins()));
+        config.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS", "HEAD"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id"));
+        config.setAllowCredentials(false);
+        config.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", config);
+        return source;
     }
 
     private AuthenticationEntryPoint unauthenticatedEntryPoint() {

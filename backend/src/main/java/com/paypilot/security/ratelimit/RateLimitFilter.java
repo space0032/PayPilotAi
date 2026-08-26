@@ -35,13 +35,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final Map<String, Bucket> bucketsByIp = new ConcurrentHashMap<>();
     private final RateLimitProperties properties;
+    private final TrustedProxyResolver proxyResolver;
 
-    public RateLimitFilter(RateLimitProperties properties) {
+    public RateLimitFilter(RateLimitProperties properties,
+                           TrustedProxyResolver proxyResolver) {
         this.properties = properties;
+        this.proxyResolver = proxyResolver;
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        // Preflights carry no credentials and browsers send them before we
+        // could ever authenticate - counting them would tax CORS itself.
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
         return !request.getRequestURI().startsWith(AUTH_PREFIX);
     }
 
@@ -49,7 +57,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String ip = clientIp(request);
+        String ip = proxyResolver.clientIp(request);
         Bucket bucket = bucketsByIp.computeIfAbsent(ip, ignored -> newBucket());
 
         if (bucket.tryConsume(1)) {
@@ -76,17 +84,5 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 .refillGreedy(capacity, Duration.ofMinutes(1))
                 .build();
         return Bucket.builder().addLimit(limit).build();
-    }
-
-    /**
-     * Honours X-Forwarded-For when present so limits survive a reverse proxy.
-     * Only safe once deployed behind a trusted proxy - noted for hardening phase.
-     */
-    private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }

@@ -34,7 +34,8 @@ public class AgentController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public SessionTranscriptResponse start(@AuthenticationPrincipal AuthenticatedUser user,
-                                           @RequestBody StartSessionRequest request) {
+                                          @jakarta.validation.Valid
+                                          @RequestBody StartSessionRequest request) {
         return agentService.startAndRun(user.userId(), request);
     }
 

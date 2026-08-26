@@ -68,6 +68,13 @@ paypilot:
       ttl-days: 7
     rate-limit:
       auth-capacity-per-minute: 10
+    cors:
+      # Comma-separated list; the Vite dev-server origin is the default.
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    trusted-proxy:
+      # Who is allowed to speak for clients via X-Forwarded-For.
+      # Empty = nobody: limits key on remoteAddr alone.
+      cidrs: ${TRUSTED_PROXY_CIDRS:}
   payments:
     # mock = local stand-in (no account needed); razorpay = live REST adapter.
     gateway: ${PAYMENTS_GATEWAY:mock}
