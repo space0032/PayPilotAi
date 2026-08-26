@@ -1,5 +1,6 @@
 package com.paypilot.commerce.catalog;
 
+import com.paypilot.common.money.CurrencyConverter;
 import com.paypilot.common.error.BadRequestException;
 import com.paypilot.common.error.NotFoundException;
 import com.paypilot.commerce.catalog.api.dto.CategoryDto;
@@ -32,13 +33,16 @@ public class CatalogService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final InventoryRepository inventoryRepository;
+    private final CurrencyConverter currencyConverter;
 
     public CatalogService(ProductRepository productRepository,
                           CategoryRepository categoryRepository,
-                          InventoryRepository inventoryRepository) {
+                          InventoryRepository inventoryRepository,
+                          CurrencyConverter currencyConverter) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
         this.inventoryRepository = inventoryRepository;
+        this.currencyConverter = currencyConverter;
     }
 
     @Transactional(readOnly = true)
@@ -48,7 +52,8 @@ public class CatalogService {
                                                      String maxPrice,
                                                      String sort,
                                                      Integer page,
-                                                     Integer size) {
+                                                     Integer size,
+                                                     String currency) {
         String normalizedTerm = normalizeTerm(term);
         Long categoryId = resolveCategory(categorySlug);
         Long minPaise = parseRupees(minPrice, "minPrice");
@@ -60,18 +65,19 @@ public class CatalogService {
         int safePage = page == null ? 0 : Math.max(0, page);
         int safeSize = size == null ? DEFAULT_PAGE_SIZE : Math.min(Math.max(1, size), MAX_PAGE_SIZE);
 
+        String displayCurrency = resolveCurrency(currency);
         List<ProductSummary> items = productRepository
                 .searchCatalog(normalizedTerm, categoryId, minPaise, maxPaise, sortKey,
                         safeSize, safePage * safeSize)
                 .stream()
-                .map(this::toSummary)
+                .map(p -> toSummary(p, displayCurrency))
                 .toList();
         long total = productRepository.countCatalog(normalizedTerm, categoryId, minPaise, maxPaise);
         return PageResponse.of(items, safePage, safeSize, total);
     }
 
     @Transactional(readOnly = true)
-    public ProductDetail getProduct(String sku) {
+    public ProductDetail getProduct(String sku, String currency) {
         Product product = productRepository.findBySku(sku)
                 .orElseThrow(() -> new NotFoundException("Product", sku));
         var category = categoryRepository.findById(product.getCategoryId())
@@ -80,13 +86,16 @@ public class CatalogService {
         int available = inventoryRepository.findById(product.getId())
                 .map(inv -> inv.getAvailable())
                 .orElse(0);
+        String displayCurrency = resolveCurrency(currency);
+        String effectiveCurrency = displayCurrency != null ? displayCurrency : product.getCurrency();
         return new ProductDetail(
                 product.getId(),
                 product.getSku(),
                 product.getBrand(),
                 product.getTitle(),
                 product.getDescription(),
-                rupees(product.getPricePaise()),
+                displayPrice(product.getPricePaise(), product.getCurrency(), effectiveCurrency),
+                effectiveCurrency,
                 product.getRating(),
                 product.getAttributes(),
                 category,
@@ -101,9 +110,38 @@ public class CatalogService {
                 .toList();
     }
 
-    private ProductSummary toSummary(Product p) {
+    private ProductSummary toSummary(Product p, String displayCurrency) {
+        String effectiveCurrency = displayCurrency != null ? displayCurrency : p.getCurrency();
         return new ProductSummary(p.getId(), p.getSku(), p.getBrand(), p.getTitle(),
-                rupees(p.getPricePaise()), p.getRating());
+                displayPrice(p.getPricePaise(), p.getCurrency(), effectiveCurrency),
+                effectiveCurrency,
+                p.getRating());
+    }
+
+    /**
+     * Convert a price from the product's native currency to the requested
+     * display currency.  If the currencies match or the converter doesn't
+     * support the pair, the original paise value is returned unchanged.
+     */
+    private BigDecimal displayPrice(long pricePaise, String from, String to) {
+        if (to == null || from.equalsIgnoreCase(to)
+                || !currencyConverter.supports(from, to)) {
+            return BigDecimal.valueOf(pricePaise, 2);
+        }
+        long converted = currencyConverter.convert(pricePaise, from, to);
+        return BigDecimal.valueOf(converted, 2);
+    }
+
+    private String resolveCurrency(String requested) {
+        if (requested == null || requested.isBlank()) {
+            return null;   // null = use product's native currency
+        }
+        String code = requested.trim().toUpperCase();
+        if (code.length() != 3 || !code.matches("[A-Z]{3}")) {
+            throw new BadRequestException("INVALID_CURRENCY",
+                    "currency must be a valid 3-letter ISO 4217 code");
+        }
+        return code;
     }
 
     private BigDecimal rupees(long paise) {

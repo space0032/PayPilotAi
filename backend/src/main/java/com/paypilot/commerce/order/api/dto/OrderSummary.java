@@ -10,6 +10,7 @@ import java.time.Instant;
 public record OrderSummary(
         Long orderId,
         String status,
+        String currency,
         BigDecimal total,
         Instant createdAt) {
 }

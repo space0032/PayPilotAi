@@ -51,6 +51,10 @@ public class Product {
     @Column(columnDefinition = "text")
     private String description;
 
+    /** ISO 4217 currency code for price_paise (e.g. "INR", "USD"). */
+    @Column(nullable = false, length = 3)
+    private String currency = "INR";
+
     /** Canonical stored amount in INR minor units (paise). Never floating point. */
     @Column(name = "price_paise", nullable = false)
     private long pricePaise;
@@ -80,11 +84,18 @@ public class Product {
     public Product(Long categoryId, String sku, String brand, String title,
                    String description, long pricePaise, BigDecimal rating,
                    Map<String, Object> attributes) {
+        this(categoryId, sku, brand, title, description, "INR", pricePaise, rating, attributes);
+    }
+
+    public Product(Long categoryId, String sku, String brand, String title,
+                   String description, String currency, long pricePaise, BigDecimal rating,
+                   Map<String, Object> attributes) {
         this.categoryId = categoryId;
         this.sku = sku;
         this.brand = brand;
         this.title = title;
         this.description = description;
+        this.currency = currency == null ? "INR" : currency.toUpperCase();
         this.pricePaise = pricePaise;
         this.rating = rating;
         this.attributes = attributes == null ? new HashMap<>() : new HashMap<>(attributes);
@@ -112,6 +123,10 @@ public class Product {
 
     public String getDescription() {
         return description;
+    }
+
+    public String getCurrency() {
+        return currency;
     }
 
     public long getPricePaise() {

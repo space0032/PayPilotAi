@@ -13,6 +13,7 @@ public record ProductDetail(
         String title,
         String description,
         BigDecimal price,
+        String currency,
         BigDecimal rating,
         Map<String, Object> attributes,
         CategoryDto category,

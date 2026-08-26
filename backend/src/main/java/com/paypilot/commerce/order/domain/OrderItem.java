@@ -31,15 +31,25 @@ public class OrderItem {
     @Column(name = "unit_price_paise", nullable = false)
     private long unitPricePaise;
 
+    /** ISO 4217 currency code (e.g. "INR", "USD"). */
+    @Column(nullable = false, length = 3)
+    private String currency = "INR";
+
     protected OrderItem() {
         // JPA
     }
 
     public OrderItem(Long orderId, Long productId, int quantity, long unitPricePaise) {
+        this(orderId, productId, quantity, unitPricePaise, "INR");
+    }
+
+    public OrderItem(Long orderId, Long productId, int quantity,
+                     long unitPricePaise, String currency) {
         this.orderId = orderId;
         this.productId = productId;
         this.quantity = quantity;
         this.unitPricePaise = unitPricePaise;
+        this.currency = currency == null ? "INR" : currency.toUpperCase();
     }
 
     public Long getId() {
@@ -60,5 +70,9 @@ public class OrderItem {
 
     public long getUnitPricePaise() {
         return unitPricePaise;
+    }
+
+    public String getCurrency() {
+        return currency;
     }
 }

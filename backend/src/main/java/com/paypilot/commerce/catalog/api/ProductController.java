@@ -32,12 +32,14 @@ public class ProductController {
             @RequestParam(required = false) String maxPrice,
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) Integer page,
-            @RequestParam(required = false) Integer size) {
-        return catalogService.listProducts(q, category, minPrice, maxPrice, sort, page, size);
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) String currency) {
+        return catalogService.listProducts(q, category, minPrice, maxPrice, sort, page, size, currency);
     }
 
     @GetMapping("/{sku}")
-    public ProductDetail detail(@PathVariable String sku) {
-        return catalogService.getProduct(sku);
+    public ProductDetail detail(@PathVariable String sku,
+                                @RequestParam(required = false) String currency) {
+        return catalogService.getProduct(sku, currency);
     }
 }

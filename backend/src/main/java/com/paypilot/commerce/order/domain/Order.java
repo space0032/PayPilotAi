@@ -39,6 +39,10 @@ public class Order {
     @Column(nullable = false, length = 30)
     private OrderStatus status = OrderStatus.PENDING_PAYMENT;
 
+    /** ISO 4217 currency code (e.g. "INR", "USD"). */
+    @Column(nullable = false, length = 3)
+    private String currency = "INR";
+
     @Column(name = "subtotal_paise", nullable = false)
     private long subtotalPaise;
 
@@ -69,7 +73,13 @@ public class Order {
 
     public Order(Long userId, long subtotalPaise, long discountPaise,
                  long totalPaise, Long offerId, Map<String, Object> cartSnapshot) {
+        this(userId, "INR", subtotalPaise, discountPaise, totalPaise, offerId, cartSnapshot);
+    }
+
+    public Order(Long userId, String currency, long subtotalPaise, long discountPaise,
+                 long totalPaise, Long offerId, Map<String, Object> cartSnapshot) {
         this.userId = userId;
+        this.currency = currency == null ? "INR" : currency.toUpperCase();
         this.subtotalPaise = subtotalPaise;
         this.discountPaise = discountPaise;
         this.totalPaise = totalPaise;
@@ -91,6 +101,10 @@ public class Order {
 
     public void setStatus(OrderStatus status) {
         this.status = status;
+    }
+
+    public String getCurrency() {
+        return currency;
     }
 
     public long getSubtotalPaise() {

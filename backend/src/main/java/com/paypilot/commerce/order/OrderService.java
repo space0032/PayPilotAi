@@ -108,6 +108,7 @@ public class OrderService {
                 userId, PageRequest.of(safePage, safeSize));
         List<OrderSummary> items = result.getContent().stream()
                 .map(o -> new OrderSummary(o.getId(), o.getStatus().name(),
+                        o.getCurrency(),
                         BigDecimal.valueOf(o.getTotalPaise(), 2), o.getCreatedAt()))
                 .toList();
         return PageResponse.of(items, safePage, safeSize, result.getTotalElements());
@@ -129,6 +130,11 @@ public class OrderService {
                 .mapToLong(item -> products.get(item.getProductId()).getPricePaise()
                         * item.getQuantity())
                 .sum();
+
+        // Derive currency from the first product; all items in a single order
+        // share the same product currency (mixed-currency carts are rejected
+        // at the cart layer or handled by a future price-conversion step).
+        String currency = products.get(items.get(0).getProductId()).getCurrency();
 
         Long offerId = null;
         String offerCode = null;
@@ -152,13 +158,13 @@ public class OrderService {
         Map<String, Object> snapshot =
                 buildSnapshot(items, products, offerCode, subtotalPaise, discountPaise, totalPaise);
         Order order = orderRepository.save(
-                new Order(userId, subtotalPaise, discountPaise, totalPaise, offerId, snapshot));
+                new Order(userId, currency, subtotalPaise, discountPaise, totalPaise, offerId, snapshot));
 
         List<OrderItem> savedItems = new ArrayList<>();
         for (CartItem item : items) {
             Product p = products.get(item.getProductId());
             savedItems.add(orderItemRepository.save(new OrderItem(
-                    order.getId(), p.getId(), item.getQuantity(), p.getPricePaise())));
+                    order.getId(), p.getId(), item.getQuantity(), p.getPricePaise(), p.getCurrency())));
         }
 
         if (discountPaise > 0 && offerId != null) {
@@ -299,12 +305,14 @@ public class OrderService {
                             p.getTitle(),
                             item.getQuantity(),
                             BigDecimal.valueOf(item.getUnitPricePaise(), 2),
-                            BigDecimal.valueOf(item.getUnitPricePaise() * item.getQuantity(), 2));
+                            BigDecimal.valueOf(item.getUnitPricePaise() * item.getQuantity(), 2),
+                            item.getCurrency());
                 })
                 .toList();
         return new OrderResponse(
                 order.getId(),
                 order.getStatus().name(),
+                order.getCurrency(),
                 lines,
                 BigDecimal.valueOf(order.getSubtotalPaise(), 2),
                 BigDecimal.valueOf(order.getDiscountPaise(), 2),

@@ -11,6 +11,7 @@ import java.util.List;
 public record OrderResponse(
         Long orderId,
         String status,
+        String currency,
         List<OrderItemResponse> items,
         BigDecimal subtotal,
         BigDecimal discount,

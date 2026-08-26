@@ -78,7 +78,7 @@ public class AgentTools {
 
     public List<ProductSummary> search(String term) {
         PageResponse<ProductSummary> page =
-                catalogService.listProducts(term, null, null, null, "price_asc", 0, 5);
+                catalogService.listProducts(term, null, null, null, "price_asc", 0, 5, null);
         return page.items();
     }
 
