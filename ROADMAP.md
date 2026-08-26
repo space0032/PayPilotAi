@@ -32,12 +32,12 @@ tables); later migrations only activate/extend what each phase needs.
 | 14 | `e02a938` | Live Razorpay REST adapter behind PaymentGatewayPort (Basic auth, orders + refunds APIs, outage→GATEWAY_UNAVAILABLE); refund flow: SUCCESS→REFUNDED FSM step, row-lock serialization, persisted gateway refund receipt |
 | 15 | `98649d1` | Observability: JSON logging (json-logs profile), Prometheus at /actuator/prometheus with business meters (payments lifecycle, gateway latency, agent tool calls by outcome, consent decisions), correlation ids stamped into audited tool-call rows and surfaced via the transcript API |
 | 16 | `402620c` | Security hardening: CIDR-aware trusted-proxy client IP resolution (spoofed XFF cannot split rate-limit buckets unless proxy is explicitly trusted), OPTIONS preflights excluded from rate limiting, CORS policy for frontend origin, validation gap in AgentController sealed |
+| 17 | `d91ed64` | Deployment: multi-stage Dockerfile (JDK 21 builder + JRE-only runtime with Maven cache), prod compose profile (hidden internal ports, env-file secrets, health checks), GitHub Actions CI pipeline (test gate on every push/PR, GHCR image build+push on merge to main) |
 
 ## Remaining
 
 | Phase | Scope |
 |-------|-------|
-| 17 | Deployment: multi-stage Dockerfile, compose prod profile, CI pipeline (build + test + image) |
 | 18 | Performance: load tests on hot paths (search/cart/checkout/webhook), connection-pool and index tuning |
 | 19 | Resilience: gateway outage drills, webhook replay storms, sweeper chaos tests |
 | 20 | Launch polish: README/docs rewrite, demo script, seed-data curation |
