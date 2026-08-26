@@ -1,0 +1,101 @@
+# Phase 17: CI pipeline — build the backend, run every test, and on
+# pushes to main build + push a versioned Docker image to GitHub
+# Container Registry. PRs only run the test gate; image publishing
+# is gated behind a merge to main so the repo never ships untested
+# code.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write          # needed only for the docker push job
+
+env:
+  JAVA_VERSION: "21"
+
+jobs:
+  # ---------------------------------------------------------------
+  # Test gate — every push and PR must pass this before anything
+  # else runs.
+  # ---------------------------------------------------------------
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Start compose services (Testcontainers uses these as
+          the host-side Postgres for RateLimitIntegrationTest)
+        run: docker compose up -d
+
+      - name: Wait for Postgres to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            docker compose ps --format json | grep -q '"Health":"healthy"' && break
+            sleep 2
+          done
+
+      - name: Run tests
+        run: mvn test -q
+
+      - name: Tear down compose services
+        if: always()
+        run: docker compose down -v
+
+  # ---------------------------------------------------------------
+  # Docker image — build + push to GHCR on merge to main.
+  # The image tag is the short SHA so every deployable commit is
+  # traceable to the exact code that produced it.
+  # ---------------------------------------------------------------
+  docker-image:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

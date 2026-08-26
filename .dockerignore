@@ -1,0 +1,16 @@
+# Phase 17: Docker build context — strip everything the backend image
+# does not need. Smaller context = faster builds; fewer cache-busting
+# invalidations from unrelated file changes.
+frontend/
+node_modules/
+.git/
+.github/
+*.md
+*.log
+.env
+docker-compose*.yml
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

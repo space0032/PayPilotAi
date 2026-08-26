@@ -68,10 +68,30 @@ See `.env.example`. Highlights:
 cd backend && mvn test
 ```
 
-91 tests across 14 suites. Most are Testcontainers integration tests
+115 tests across 17 suites. Most are Testcontainers integration tests
 (Docker required); unit suites (`MoneyTest`, `PricingEngineTest`,
-`JwtServiceTest`) run anywhere. `RateLimitIntegrationTest` targets the
-compose Postgres on `localhost:5432`, so bring the stack up first.
+`JwtServiceTest`, `TrustedProxyResolverTest`) run anywhere.
+`RateLimitIntegrationTest` targets the compose Postgres on `localhost:5432`,
+so bring the stack up first.
+
+## Production build & deploy
+
+Multi-stage Dockerfile builds a ~140 MB JRE-only image (no Maven, no
+source code):
+
+```bash
+docker compose --profile prod up -d --build
+```
+
+This builds the backend image, starts Postgres + Redis (ports hidden from
+the host), and exposes the app on port 8080. All configuration flows
+through environment variables — copy `.env.example` to `.env` and fill in
+real secrets (`JWT_SECRET`, Razorpay keys, LLM provider, etc.).
+
+**CI pipeline** (GitHub Actions): every push to `main` and every PR runs
+the full test suite. On merge to `main`, a versioned Docker image is built
+and pushed to `ghcr.io/<repo>` — tagged with both the commit SHA and
+`latest`.
 
 ## Project layout
 
@@ -82,8 +102,8 @@ backend/src/main/java/com/paypilot/
   commerce/     catalog, cart, offers, orders, payments
   agent/        planner port(s), tool layer, guardrails, audit
 frontend/src/   App shell + AuthPanel/Catalog/Cart/Orders/AgentChat
-db/migration/   V1..V6 Flyway (V2 is the schema law everything maps to)
+db/migration/   V1..V8 Flyway (V2 is the schema law everything maps to)
 ```
 
-See [ROADMAP.md](ROADMAP.md) for phase history (0–13 shipped) and what's
+See [ROADMAP.md](ROADMAP.md) for phase history (0–16 shipped) and what's
 next.
