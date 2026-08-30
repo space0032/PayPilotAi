@@ -97,9 +97,9 @@ export const postJson = <T>(path: string, body?: unknown): Promise<T> =>
 
 export const getJson = <T>(path: string): Promise<T> => api<T>(path)
 
-export function money(value: number | string | null | undefined): string {
+export function money(value: number | string | null | undefined, currency = 'INR'): string {
   const n = typeof value === 'string' ? Number(value) : value
   return n == null || Number.isNaN(n)
     ? '—'
-    : n.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })
+    : n.toLocaleString('en-IN', { style: 'currency', currency })
 }

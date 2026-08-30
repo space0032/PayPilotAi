@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------
 # Stage 1 — Maven build (JDK 21)
 # ---------------------------------------------------------------
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 
 # Maven repo lives under /root/.m2 — mount a named cache so rebuilds
 # skip dependency download entirely when pom.xml hasn't changed.

@@ -60,10 +60,10 @@ git clone https://github.com/<your-org>/PayPilotAi.git
 cd PayPilotAi
 cp .env.example .env    # edit: JWT_SECRET, Razorpay keys
 
-# Build and run everything
-docker compose --profile prod up -d --build
+# Build and run the database, cache, backend, and frontend
+docker compose up -d --build
 
-# The app is now at http://localhost:8080
+# The app is now at http://localhost:8081
 ```
 
 ### Local Development

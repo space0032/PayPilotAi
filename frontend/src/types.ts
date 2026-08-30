@@ -6,6 +6,7 @@ export interface Product {
   brand: string
   title: string
   price: number | string
+  currency: string
   rating: number | string | null
 }
 
@@ -59,6 +60,7 @@ export interface Order {
   discount: number | string
   total: number | string
   createdAt: string
+  currency?: string
 }
 
 export interface OrderSummary {
@@ -66,6 +68,7 @@ export interface OrderSummary {
   status: string
   total: number | string
   createdAt: string
+  currency?: string
 }
 
 export interface AuthResponse {
